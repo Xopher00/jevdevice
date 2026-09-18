@@ -1,0 +1,56 @@
+# Frozen 2026-09-19, before any engine code existed. Plain-language goals only, no commands.
+# split: dev = may be run and inspected during development.
+#        heldout = run once at M6, cold then warm, no changes between seeing results and reporting.
+# Do not edit goal text after freezing. Add new goals with new ids instead.
+
+pc_questions:
+  - {id: pc01, split: dev,     goal: "What is the CPU temperature right now?"}
+  - {id: pc02, split: heldout, goal: "How much free disk space is left on the root filesystem?"}
+  - {id: pc03, split: dev,     goal: "Which process is using the most memory?"}
+  - {id: pc04, split: heldout, goal: "What is this machine's local IP address on wifi?"}
+  - {id: pc05, split: dev,     goal: "Is the SSH server running?"}
+  - {id: pc06, split: heldout, goal: "How long has this machine been up?"}
+  - {id: pc07, split: dev,     goal: "What kernel version is running?"}
+  - {id: pc08, split: heldout, goal: "How much RAM is installed and how much of it is free?"}
+  - {id: pc09, split: dev,     goal: "What is the battery charge percentage?"}
+  - {id: pc10, split: heldout, goal: "Which wifi network is this machine connected to?"}
+  - {id: pc11, split: dev,     goal: "How many CPU cores does this machine have?"}
+  - {id: pc12, split: heldout, goal: "What is the default gateway?"}
+  - {id: pc13, split: dev,     goal: "Which DNS servers are configured?"}
+  - {id: pc14, split: heldout, goal: "Is Docker running?"}
+  - {id: pc15, split: dev,     goal: "What GPU does this machine have?"}
+  - {id: pc16, split: heldout, goal: "What is the hostname?"}
+  - {id: pc17, split: dev,     goal: "Which users are currently logged in?"}
+  - {id: pc18, split: heldout, goal: "What is the current screen resolution?"}
+  - {id: pc19, split: dev,     goal: "Which ports are listening for connections?"}
+  - {id: pc20, split: heldout, goal: "What Linux distribution and version is this?"}
+
+phone_questions:
+  - {id: ph01, split: dev,     goal: "What is the battery level?"}
+  - {id: ph02, split: heldout, goal: "What Android version is this phone running?"}
+  - {id: ph03, split: dev,     goal: "What is the phone's model name?"}
+  - {id: ph04, split: heldout, goal: "Is Bluetooth turned on?"}
+  - {id: ph05, split: dev,     goal: "Which app is in the foreground right now?"}
+  - {id: ph06, split: heldout, goal: "How much storage space is free?"}
+  - {id: ph07, split: dev,     goal: "What is the screen resolution?"}
+  - {id: ph08, split: heldout, goal: "Is the screen currently on?"}
+  - {id: ph09, split: dev,     goal: "Which wifi network is the phone connected to?"}
+  - {id: ph10, split: heldout, goal: "What is the phone's IP address?"}
+  - {id: ph11, split: dev,     goal: "Is the phone charging?"}
+  - {id: ph12, split: heldout, goal: "How many apps are installed?"}
+  - {id: ph13, split: dev,     goal: "What is the current media volume?"}
+  - {id: ph14, split: heldout, goal: "Is NFC turned on?"}
+  - {id: ph15, split: dev,     goal: "What is the battery temperature?"}
+
+# Never wifi or mobile data: the phone is reached over wireless adb.
+phone_actions:
+  - {id: pa01, split: dev,     goal: "Open the Calculator app."}
+  - {id: pa02, split: heldout, goal: "Open the Clock app."}
+  - {id: pa03, split: dev,     goal: "Turn Bluetooth off."}
+  - {id: pa04, split: dev,     goal: "Turn Bluetooth on."}
+  - {id: pa05, split: heldout, goal: "Open the Settings app."}
+  - {id: pa06, split: dev,     goal: "Go to the home screen."}
+  - {id: pa07, split: heldout, goal: "Set the media volume to about half."}
+  - {id: pa08, split: dev,     goal: "Open the Camera app."}
+  - {id: pa09, split: heldout, goal: "Turn on Do Not Disturb."}
+  - {id: pa10, split: heldout, goal: "Take a screenshot."}

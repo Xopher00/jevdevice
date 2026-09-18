@@ -1,0 +1,28 @@
+[project]
+name = "jevdevice"
+version = "0.1.0"
+description = "MCP toolset: a small model structures messy device output and writes commands; Jev decides."
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.10,<3",
+    "httpx>=0.28,<1",
+    "mcp>=1.0,<2",
+    "langgraph>=0.2,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.25,<1",
+    "ruff>=0.16.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jevdevice"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
