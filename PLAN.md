@@ -4,6 +4,22 @@ A general tool that lets any agent operate any device. Three parts: a small loca
 small commands and turns messy output into structure; Jev judges at every junction; a graph of
 proven commands is built while the system runs and makes later goals cheaper.
 
+## 0. The goal and the model never meet (confirmed by the user 2026-09-19; overrides anything below)
+
+- **Model**: asked only goal-free questions about how to run things on this device: how to list
+  what can be run, how to get usage for one real entry, what invocations a piece of real help text
+  documents. It never sees "open YouTube" or "CPU temp". It also turns messy real output into
+  structure Jev can read.
+- **Jev**: the only part that sees the goal. It generates nothing. It picks among real things
+  (real output lines, documented invocations) and judges whether a step worked.
+- **Graph**: written by the engine from what actually ran and which real output fed which command.
+  The model never sees the graph and is never told what a node, slot or template looks like.
+  Templates emerge from observed edges. Nobody authors them, the model included.
+
+Why: given a goal, a 3B model writes the whole task from its priors (LOGBOOK: `svc radio set
+bluetooth off`). Kept goal-blind, the answer can only come from the device's own real output.
+Telling the model the shape of a template is hand-writing the templates one level up again.
+
 ## 1. The rule this plan is built around
 
 Nobody hand-writes device commands. Not the user, not me, not in `src/`, not in scripts, not as

@@ -2,7 +2,7 @@
 # ollama 0.32.15 checks <cwd>/build/lib/ollama/llama-server; copy the working
 # user install there since system ollama ships without one.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 mkdir -p build/lib/ollama
 cp -r ~/.local/ollama/lib/ollama/. build/lib/ollama/
 chmod +x build/lib/ollama/llama-server

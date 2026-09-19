@@ -7,24 +7,24 @@ question types: `noul` (yes/no probability, no confidence), `choice` (pick one,
 criteria is a map of option->description, returns probabilities+confidence),
 `score` (criteria is an ORDERED LIST of level descriptions, not a map).
 
-The native API is `POST https://api.typesafe.ai/v1/systemone` with a native
-TypeSafe key. We don't have one; OpenRouter exposes Jev at a different,
-dedicated endpoint instead (confirmed live 2026-09-18): Jev models 400 on
-`/chat/completions` ("is a decisions model"), and `/v1/systemone` doesn't exist
-on openrouter.ai. The working route is `POST /api/alpha/decisions` with an
-OpenRouter key, same `state`/`questions` body shape, response wraps answers
-under `answers` exactly as documented.
+Calls TypeSafe's own API directly: `POST https://api.typesafe.ai/v1/systemone`,
+same `state`/`questions` body shape either way, answers wrapped under `answers`.
+Model is pinned to a specific version, not the `-latest` alias, since gate.py's
+threshold was calibrated against one version's confidence computation.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 import httpx
 from pydantic import BaseModel
 
-DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
-DEFAULT_MODEL = "typesafe/jev-1.13"
+DECISIONS_URL = "https://api.typesafe.ai/v1/systemone"
+DEFAULT_MODEL = "jev-1.13.0"
+RETRY_STATUS_CODES = {429, 529}
+MAX_RETRIES = 3
 
 
 class Noul(BaseModel):
@@ -95,18 +95,21 @@ def _safe_error_summary(error: Exception) -> str:
 
 
 class JevClient:
-    """Batches independent questions over one state into a single request."""
+    """Batches independent questions over one state into a single request.
+    Reuses one httpx client across calls instead of paying a fresh TLS
+    handshake per question."""
 
     def __init__(self, api_key: str | None, model: str = DEFAULT_MODEL) -> None:
         self._api_key = api_key
         self._model = model
+        self._client = httpx.AsyncClient(timeout=30)
 
-    def readiness_error(self) -> str | None:
-        return None if self._api_key else "OPENROUTER_API_KEY is not configured"
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     async def ask(self, state: object, questions: dict[str, Question]) -> dict[str, Answer]:
         if not self._api_key:
-            raise JevError("OPENROUTER_API_KEY is not configured")
+            raise JevError("TYPESAFE_AI_API is not configured")
         if not questions:
             raise JevError("ask() requires at least one question")
         body = {
@@ -114,15 +117,17 @@ class JevClient:
             "state": state,
             "questions": {name: q.model_dump(mode="json", exclude_none=True) for name, q in questions.items()},
         }
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    DECISIONS_URL,
-                    headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
-                    json=body,
-                )
+        headers = {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await self._client.post(DECISIONS_URL, headers=headers, json=body)
                 response.raise_for_status()
-        except httpx.HTTPError as error:
-            raise JevError(f"Jev request failed ({_safe_error_summary(error)})") from error
+                break
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code not in RETRY_STATUS_CODES or attempt == MAX_RETRIES - 1:
+                    raise JevError(f"Jev request failed ({_safe_error_summary(error)})") from error
+                await asyncio.sleep(2**attempt)
+            except httpx.HTTPError as error:
+                raise JevError(f"Jev request failed ({_safe_error_summary(error)})") from error
         payload = response.json()
         return {name: _parse_answer(raw) for name, raw in payload["answers"].items()}
