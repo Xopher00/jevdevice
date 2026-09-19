@@ -6,3 +6,4 @@ __pycache__/
 *.env
 experiment/
 window_dump.xml
+LOGBOOK.md
