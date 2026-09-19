@@ -10,6 +10,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
+from .matching import fuzzy_narrow
 from .transport import AdbTransport
 
 
@@ -105,3 +106,25 @@ def parse_all_elements(dump_xml: str) -> dict[str, Element]:
     """Every real described node, clickable or not -- a scroll target need not be tappable
     to prove it's visible."""
     return _parse_elements(dump_xml, lambda _attrs: True)
+
+
+def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150) -> list[str]:
+    """Compact real-element labels for a Jev state value, in place of raw XML (verbose,
+    truncates blindly) -- reuses the same label shape narrow_and_pick already consumes
+    everywhere else. When bounding is needed, order by goal-relevance first so the drop
+    favors what's actually relevant, not whatever came last in the tree."""
+    labels = list(parse_all_elements(dump_xml))
+    if goal is not None and len(labels) > limit:
+        labels = fuzzy_narrow(goal, labels, limit=len(labels))
+    return labels[:limit]
+
+
+def screen_summary(dump_xml: str, *, goal: str | None = None) -> dict:
+    """One dump, everything a caller needs to ground a decision in the real current screen --
+    no extra device round trip beyond the dump already taken."""
+    return {
+        "foreground_package": foreground_package(dump_xml),
+        "editable_fields": list(parse_editable_elements(dump_xml)),
+        "clickable_count": len(parse_actionable_elements(dump_xml)),
+        "on_screen": describe_screen(dump_xml, goal=goal),
+    }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jevdevice.elements import parse_actionable_elements
+from jevdevice.elements import describe_screen, parse_actionable_elements
 from jevdevice.ui import _ELEMENT_CACHE, _LRUCache
 
 
@@ -41,3 +41,32 @@ def test_parse_actionable_elements_reads_clickable_nodes() -> None:
     elements = parse_actionable_elements(dump_xml)
     assert list(elements) == ["text='Send'"]
     assert (elements["text='Send'"].x, elements["text='Send'"].y) == (50, 25)
+
+
+def test_describe_screen_returns_the_same_labels_as_parse_all_elements() -> None:
+    dump_xml = (
+        '<hierarchy>'
+        '<node text="Send" resource-id="" content-desc="" clickable="true" bounds="[0,0][100,50]"/>'
+        '<node text="Cancel" resource-id="" content-desc="" clickable="true" bounds="[0,50][100,100]"/>'
+        '</hierarchy>'
+    )
+    assert describe_screen(dump_xml) == ["text='Send'", "text='Cancel'"]
+
+
+def test_describe_screen_limit_truncates() -> None:
+    nodes = "".join(
+        f'<node text="item{i}" resource-id="" content-desc="" clickable="true" bounds="[0,{i}][100,{i + 10}]"/>'
+        for i in range(5)
+    )
+    dump_xml = f"<hierarchy>{nodes}</hierarchy>"
+    assert len(describe_screen(dump_xml, limit=2)) == 2
+
+
+def test_describe_screen_goal_relevant_label_survives_truncation() -> None:
+    nodes = "".join(
+        f'<node text="noise{i}" resource-id="" content-desc="" clickable="true" bounds="[0,{i}][100,{i + 10}]"/>'
+        for i in range(5)
+    )
+    nodes += '<node text="search field" resource-id="" content-desc="" clickable="true" bounds="[0,100][100,110]"/>'
+    dump_xml = f"<hierarchy>{nodes}</hierarchy>"
+    assert "text='search field'" in describe_screen(dump_xml, goal="type into the search field", limit=2)
