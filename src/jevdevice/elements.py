@@ -36,19 +36,39 @@ class Element:
     text: str = ""  # the node's own real current text, e.g. an EditText's existing content
 
 
-def _parse_elements(dump_xml: str, is_match) -> dict[str, Element]:
-    """Every real node passing `is_match` (a real Android accessibility signal,
-    never a per-app guess), described by whichever of its own real fields are
-    non-empty, mapped to the center of its real bounds."""
+def _nearest_ancestor_bounds(node, parent_of: dict, attr: str) -> str | None:
+    """Custom-drawn menus often mark only a container `attr="true"` and leave its labeled
+    text/icon children `attr="false"` -- confirmed live (a launcher long-press menu's "Missed
+    calls" label is clickable="false" two levels under a clickable="true" real tap target)."""
+    ancestor = parent_of.get(node)
+    while ancestor is not None:
+        if ancestor.attrib.get(attr) == "true":
+            return ancestor.attrib.get("bounds")
+        ancestor = parent_of.get(ancestor)
+    return None
+
+
+def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None) -> dict[str, Element]:
+    """Every real node passing `is_match` (a real Android accessibility signal, never a
+    per-app guess), described by whichever of its own real fields are non-empty. A labeled
+    node that fails `is_match` but has a real ancestor matching `ancestor_attr` still counts,
+    using that ancestor's bounds as the real tap target."""
+    root = ET.fromstring(dump_xml)
+    parent_of = {child: parent for parent in root.iter() for child in parent} if ancestor_attr else {}
     elements: dict[str, Element] = {}
-    for node in ET.fromstring(dump_xml).iter("node"):
+    for node in root.iter("node"):
         attrs = node.attrib
-        if not is_match(attrs):
-            continue
         described = {k: v for k in ("text", "resource-id", "content-desc") if (v := attrs.get(k))}
         if not described:
             continue
-        bounds = attrs.get("bounds", "")
+        if is_match(attrs):
+            bounds = attrs.get("bounds", "")
+        elif ancestor_attr:
+            bounds = _nearest_ancestor_bounds(node, parent_of, ancestor_attr)
+        else:
+            bounds = None
+        if not bounds:
+            continue
         match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
         if not match:
             continue
@@ -59,19 +79,26 @@ def _parse_elements(dump_xml: str, is_match) -> dict[str, Element]:
 
 
 def parse_actionable_elements(dump_xml: str) -> dict[str, Element]:
-    """Every real clickable node -- Android's own signal for "this is tappable"."""
-    return _parse_elements(dump_xml, lambda attrs: attrs.get("clickable") == "true")
+    """Every real clickable node, plus a labeled node under a clickable container --
+    Android's own signal for "this is tappable"."""
+    return _parse_elements(dump_xml, lambda attrs: attrs.get("clickable") == "true", ancestor_attr="clickable")
+
+
+# A subclass's own class name doesn't always contain "EditText" -- confirmed live:
+# Settings' search bar is a real android.widget.AutoCompleteTextView (extends EditText).
+_EDITABLE_CLASSES = ("EditText", "AutoCompleteTextView")
 
 
 def parse_editable_elements(dump_xml: str) -> dict[str, Element]:
     """Every real node whose Android `class` is (a subclass of) EditText -- the
     OS's own signal for "this accepts text input", not a per-app guess."""
-    return _parse_elements(dump_xml, lambda attrs: "EditText" in attrs.get("class", ""))
+    return _parse_elements(dump_xml, lambda attrs: any(c in attrs.get("class", "") for c in _EDITABLE_CLASSES))
 
 
 def parse_long_clickable_elements(dump_xml: str) -> dict[str, Element]:
-    """Every real long-clickable node -- Android's own signal for "this supports long-press"."""
-    return _parse_elements(dump_xml, lambda attrs: attrs.get("long-clickable") == "true")
+    """Every real long-clickable node, plus a labeled node under a long-clickable
+    container -- Android's own signal for "this supports long-press"."""
+    return _parse_elements(dump_xml, lambda attrs: attrs.get("long-clickable") == "true", ancestor_attr="long-clickable")
 
 
 def parse_all_elements(dump_xml: str) -> dict[str, Element]:
