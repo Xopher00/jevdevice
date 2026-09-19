@@ -283,13 +283,15 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
 
     answer_key = None
     if parsed:
-        # A verbose real service (e.g. wifi) can parse to 300+ fields -- reuse the same
-        # chunking-safe narrow_and_pick used everywhere else instead of one unbounded Choice.
+        # min_fit is the real bar for this read-only pick -- raw Choice confidence spreads
+        # thin over 200+ plausible field names even for a clearly-correct answer (confirmed
+        # live: fit=0.88 but confidence=0.35 among 236 real bluetooth fields).
         field_verdict = await narrow_and_pick(
             jev, goal, list(parsed),
             instructions="Which real field would answer the goal?",
             fit_instructions="Does the field {candidate} actually answer the goal?",
             state_extra={"parsed_fields": parsed},
+            min_confidence=0.0, min_margin=0.0,
         )
         if field_verdict.ok:
             answer_key = field_verdict.choice

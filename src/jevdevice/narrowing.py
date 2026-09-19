@@ -69,7 +69,8 @@ async def semantic_shortlist(
 async def narrow_and_pick(
     jev: JevClient, query: str, candidates: list[str], *, instructions: str, fit_instructions: str,
     evidence_for: Callable[[list[str]], Awaitable[dict[str, str]]] | None = None,
-    chunk_size: int = CHUNK_SIZE, k: int = BEAM_K, min_fit: float = 0.5, state_extra: dict | None = None,
+    chunk_size: int = CHUNK_SIZE, k: int = BEAM_K, min_fit: float = 0.5, min_confidence: float = 0.6,
+    min_margin: float = 0.15, state_extra: dict | None = None,
 ) -> NarrowVerdict:
     """Rounds 1+2+decide: the one function real call sites use.
 
@@ -87,7 +88,7 @@ async def narrow_and_pick(
             candidates,
         )
     if not shortlist:
-        return decide(None, {}, 0.0, {}, candidates, min_fit=min_fit)
+        return decide(None, {}, 0.0, {}, candidates, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin)
 
     evidence = await evidence_for(shortlist) if evidence_for else {}
     criteria = {c: evidence.get(c) for c in shortlist}
@@ -99,4 +100,4 @@ async def narrow_and_pick(
     })
     pick = answers["pick"]
     fits = {c: answers[key].noul for key, c in fit_keys.items()}
-    return decide(pick.choice, pick.probabilities, pick.confidence, fits, candidates, min_fit=min_fit)
+    return decide(pick.choice, pick.probabilities, pick.confidence, fits, candidates, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin)
