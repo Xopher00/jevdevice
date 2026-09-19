@@ -429,10 +429,14 @@ async def propose_type(jev: JevClient, transport: AdbTransport, goal: str, *, ve
         )
 
     async def _narrow_field() -> NarrowVerdict:
+        # A field's label embeds its live text, so it reads as a new candidate once typed into --
+        # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
+        loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(elements) <= 3 else {}
         return await narrow_and_pick(
             jev, goal, list(elements),
             instructions="Which on-screen field should receive text for this goal?",
             fit_instructions="Would typing into {candidate} actually serve the goal?",
+            **loose,
         )
 
     cache_key = (foreground_package(dump_xml), goal)
