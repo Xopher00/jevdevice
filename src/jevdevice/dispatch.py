@@ -190,6 +190,7 @@ async def main() -> None:
     jev, transport = bootstrap()
     goal = sys.argv[1] if len(sys.argv) > 1 else "what is my battery level?"
     await run_toolkit(jev, transport, goal)
+    print(f"\nusage: {jev.usage.snapshot()}")
 
 
 if __name__ == "__main__":

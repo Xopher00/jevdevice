@@ -21,6 +21,8 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
+from .ledger import Usage, UsageLedger
+
 DECISIONS_URL = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-1.13.0"
 RETRY_STATUS_CODES = {429, 529}
@@ -103,6 +105,7 @@ class JevClient:
         self._api_key = api_key
         self._model = model
         self._client = httpx.AsyncClient(timeout=30)
+        self.usage = UsageLedger()
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -130,4 +133,6 @@ class JevClient:
             except httpx.HTTPError as error:
                 raise JevError(f"Jev request failed ({_safe_error_summary(error)})") from error
         payload = response.json()
+        if "usage" in payload:
+            self.usage.record(Usage(**payload["usage"]))
         return {name: _parse_answer(raw) for name, raw in payload["answers"].items()}
