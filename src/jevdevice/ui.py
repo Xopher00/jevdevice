@@ -115,7 +115,7 @@ async def _fused_pick_and_gate(
     safe_keys = {f"safe_{i}": c for i, c in enumerate(labels)}
     questions = {
         "pick": Choice(instructions=pick_instructions, criteria=criteria),
-        **{key: Noul(instructions=fit_instructions.format(candidate=c)) for key, c in fit_keys.items()},
+        **{key: Noul(instructions=fit_instructions.format(candidate=elements[c].description or c)) for key, c in fit_keys.items()},
         **{
             key: Noul(instructions=(
                 f"chosen_action={chosen_label_for(c)!r}. proposed_command={command_for(elements[c])!r}. "
@@ -178,7 +178,7 @@ async def _propose_gesture(
             if verbose:
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
         else:
-            verdict = await narrow_and_pick(jev, goal, list(elements), instructions=pick_instructions, fit_instructions=fit_instructions)
+            verdict = await narrow_and_pick(jev, goal, list(elements), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: elements[c].description or c)
             if verbose:
                 print(f"shortlist: {verdict.shortlist}")
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
@@ -330,6 +330,7 @@ async def scroll_to_find(
             jev, goal, list(elements),
             instructions="Which real on-screen item is the target this goal is scrolling to find?",
             fit_instructions="Is {candidate} really the target this goal describes?",
+            describe=lambda c: elements[c].description or c,
         )
         if verbose:
             print(f"attempt {attempt}/{max_attempts}: picked {verdict.choice!r} ok={verdict.ok}")
@@ -454,6 +455,7 @@ async def propose_type(jev: JevClient, transport: AdbTransport, goal: str, *, ve
             jev, goal, list(elements),
             instructions="Which on-screen field should receive text for this goal?",
             fit_instructions="Would typing into {candidate} actually serve the goal?",
+            describe=lambda c: elements[c].description or c,
             **loose,
         )
 

@@ -35,6 +35,7 @@ class Element:
     y: int
     bounds: str  # real device-reported bounds string, e.g. "[166,1173][415,1615]" -- passed to the gate as evidence
     text: str = ""  # the node's own real current text, e.g. an EditText's existing content
+    description: str = ""  # natural-language phrasing of the same real fields, for fit questions
 
 
 def _nearest_ancestor_bounds(node, parent_of: dict, attr: str) -> str | None:
@@ -55,6 +56,27 @@ def _short_class(class_name: str) -> str:
 
 def _short_id(resource_id: str) -> str:
     return resource_id.rsplit("/", 1)[-1]
+
+
+_CLASS_NOUNS = (
+    ("EditText", "text field"), ("AutoCompleteTextView", "text field"),
+    ("Button", "button"), ("CheckBox", "toggle"), ("Switch", "toggle"), ("TextView", "text"),
+)
+
+
+def _natural_description(described: dict, attrs: dict) -> str:
+    """A raw `text='X' resource-id='Y'` label in a fit question measurably depresses Jev's
+    fit score versus the same facts phrased as a sentence (confirmed live: 0.60 vs 0.90)."""
+    class_name = attrs.get("class", "")
+    noun = next((n for pattern, n in _CLASS_NOUNS if pattern in class_name), "element")
+    clauses = []
+    if "content-desc" in described:
+        clauses.append(f"labelled {described['content-desc']!r}")
+    if "text" in described:
+        clauses.append(f"showing the text {described['text']!r}")
+    if "resource-id" in described:
+        clauses.append(f"identified as {_short_id(described['resource-id'])!r}")
+    return f"the {noun} " + ", ".join(clauses) if clauses else f"the {noun}"
 
 
 def _context_label(node, parent_of: dict, attrs: dict) -> str | None:
@@ -103,7 +125,8 @@ def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, l
         if not match:
             continue
         left, top, right, bottom = (int(n) for n in match.groups())
-        elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""))
+        description = _natural_description(described, attrs) if described else ""
+        elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""), description)
     return elements
 
 

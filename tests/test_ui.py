@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from jevdevice.elements import describe_screen, parse_actionable_elements, parse_all_elements, parse_editable_elements
+from jevdevice.elements import (
+    _natural_description,
+    describe_screen,
+    parse_actionable_elements,
+    parse_all_elements,
+    parse_editable_elements,
+)
 from jevdevice.ui import _ELEMENT_CACHE, _LRUCache, _no_editable_field_reasons
 
 
@@ -117,3 +123,29 @@ def test_parse_all_elements_unaffected_by_the_label_context_fallback() -> None:
         '</hierarchy>'
     )
     assert list(parse_all_elements(dump_xml)) == ["resource-id='parent'"]
+
+
+def test_natural_description_combines_present_real_fields() -> None:
+    described = {"text": "Compose email", "resource-id": "com.google.android.gm:id/editor"}
+    assert _natural_description(described, {"class": "android.widget.EditText"}) == (
+        "the text field showing the text 'Compose email', identified as 'editor'"
+    )
+
+
+def test_natural_description_falls_back_to_bare_noun_with_no_real_fields() -> None:
+    assert _natural_description({}, {"class": "android.widget.EditText"}) == "the text field"
+
+
+def test_natural_description_unknown_class_is_a_generic_element() -> None:
+    described = {"content-desc": "Search"}
+    assert _natural_description(described, {"class": "android.view.ViewGroup"}) == "the element labelled 'Search'"
+
+
+def test_parse_editable_elements_populates_description_for_a_real_field() -> None:
+    dump_xml = (
+        '<hierarchy><node text="Compose email" resource-id="editor" content-desc="" '
+        'class="android.widget.EditText" clickable="false" bounds="[0,0][100,50]"/></hierarchy>'
+    )
+    elements = parse_editable_elements(dump_xml)
+    label = "text='Compose email' resource-id='editor'"
+    assert elements[label].description == "the text field showing the text 'Compose email', identified as 'editor'"
