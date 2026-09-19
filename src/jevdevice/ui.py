@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from .elements import (
     Element,
+    describe_screen,
     dump_screen,
     foreground_package,
     parse_actionable_elements,
@@ -352,10 +353,15 @@ async def _verify_after_action(
     satisfied = 0.0
     for delay in delays:
         await asyncio.sleep(delay)
-        screen_after = await dump_screen(transport)
+        # A fixed-length raw-XML truncation can cut off the real evidence entirely (confirmed
+        # live); compact per-element labels carry far more real signal per character.
+        screen_after = describe_screen(await dump_screen(transport), goal=goal)
         answers = await jev.ask(
-            {"goal": goal, "acted_on": acted_on, "screen_after": screen_after[:4000]},
-            {"satisfied": Noul(instructions="Given screen_after, is the goal now achieved?")},
+            {"goal": goal, "acted_on": acted_on, "screen_after": screen_after},
+            {"satisfied": Noul(instructions="screen_after lists every real element currently on "
+                                             "screen, each described by its own real text/"
+                                             "resource-id/content-desc. Given screen_after, is "
+                                             "the goal now achieved?")},
         )
         satisfied = answers["satisfied"].noul
         if satisfied >= 0.5:
