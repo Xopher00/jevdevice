@@ -159,6 +159,25 @@ def parse_all_elements(dump_xml: str) -> dict[str, Element]:
     return _parse_elements(dump_xml, lambda _attrs: True)
 
 
+def count_unlabeled_interactive(dump_xml: str) -> dict[str, int]:
+    """Free (no Jev) structural tally of real clickable/long-clickable nodes with none of
+    text/resource-id/content-desc -- the exact shape bug 9 found parse_editable_elements
+    silently dropping. Used by the audit crawler to measure real prevalence across many
+    screens before deciding whether to extend `label_context` beyond editable fields."""
+    root = ET.fromstring(dump_xml)
+    counts = {"clickable": 0, "clickable_unlabeled": 0, "long_clickable": 0, "long_clickable_unlabeled": 0}
+    for node in root.iter("node"):
+        attrs = node.attrib
+        described = any(attrs.get(k) for k in ("text", "resource-id", "content-desc"))
+        if attrs.get("clickable") == "true":
+            counts["clickable"] += 1
+            counts["clickable_unlabeled"] += not described
+        if attrs.get("long-clickable") == "true":
+            counts["long_clickable"] += 1
+            counts["long_clickable_unlabeled"] += not described
+    return counts
+
+
 def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150) -> list[str]:
     """Compact real-element labels for a Jev state value, in place of raw XML (verbose,
     truncates blindly) -- reuses the same label shape narrow_and_pick already consumes

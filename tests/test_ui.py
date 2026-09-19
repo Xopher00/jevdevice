@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jevdevice.elements import (
     _natural_description,
+    count_unlabeled_interactive,
     describe_screen,
     parse_actionable_elements,
     parse_all_elements,
@@ -47,6 +48,21 @@ def test_parse_actionable_elements_reads_clickable_nodes() -> None:
     elements = parse_actionable_elements(dump_xml)
     assert list(elements) == ["text='Send'"]
     assert (elements["text='Send'"].x, elements["text='Send'"].y) == (50, 25)
+
+
+def test_count_unlabeled_interactive_tallies_bare_clickable_nodes() -> None:
+    dump_xml = (
+        '<hierarchy>'
+        '<node text="Send" resource-id="" content-desc="" clickable="true" bounds="[0,0][100,50]"/>'
+        '<node text="" resource-id="" content-desc="" clickable="true" bounds="[0,50][100,100]"/>'
+        '<node text="" resource-id="" content-desc="" long-clickable="true" bounds="[0,100][100,150]"/>'
+        '<node text="" resource-id="" content-desc="" clickable="false" bounds="[0,150][100,200]"/>'
+        '</hierarchy>'
+    )
+    assert count_unlabeled_interactive(dump_xml) == {
+        "clickable": 2, "clickable_unlabeled": 1,
+        "long_clickable": 1, "long_clickable_unlabeled": 1,
+    }
 
 
 def test_describe_screen_returns_the_same_labels_as_parse_all_elements() -> None:
