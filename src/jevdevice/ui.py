@@ -434,6 +434,47 @@ def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
     return tuple(reasons)
 
 
+async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | None:
+    if not spans:
+        return None
+    return await jev.ask(
+        {"goal": goal, "candidate_values": spans},
+        {
+            "value": Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans}),
+            "any_fit": Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?"),
+        },
+    )
+
+
+async def _fused_field_and_value(
+    jev: JevClient, goal: str, elements: dict[str, Element], spans: list[str], fit_instructions: str,
+) -> tuple[NarrowVerdict, dict | None]:
+    """Batches field-narrow with value-pick into one real request on a cache miss -- they're
+    independent facts that previously cost two separate round trips (asyncio.gather only
+    overlaps wall-clock time, it doesn't merge the payloads)."""
+    labels = list(elements)
+    field_criteria = {c: None for c in labels}
+    fit_keys = {f"fit_{i}": c for i, c in enumerate(labels)}
+    state = {"goal": goal, "candidates": field_criteria}
+    questions = {
+        "pick": Choice(instructions="Which on-screen field should receive text for this goal?", criteria=field_criteria),
+        **{key: Noul(instructions=fit_instructions.format(candidate=elements[c].description or c)) for key, c in fit_keys.items()},
+    }
+    if spans:
+        state["candidate_values"] = spans
+        questions["value"] = Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans})
+        questions["any_fit_value"] = Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?")
+    answers = await jev.ask(state, questions)
+    pick = answers["pick"]
+    fits = {c: answers[key].noul for key, c in fit_keys.items()}
+    # A field's label embeds its live text, so it reads as a new candidate once typed into --
+    # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
+    loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(elements) <= 3 else {}
+    field_verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, labels, **loose)
+    value_answers = {"value": answers["value"], "any_fit": answers["any_fit_value"]} if spans else None
+    return field_verdict, value_answers
+
+
 async def propose_type(
     jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
     fit_instructions: str = "Would typing into {candidate} actually serve the goal?",
@@ -448,38 +489,18 @@ async def propose_type(
     if not elements:
         return TypeProposal(None, None, 0.0, reasons=_no_editable_field_reasons(dump_xml, goal))
 
-    # Field pick (needs the real screen) and value extraction (needs only goal text) are
-    # independent -- run them concurrently instead of paying two sequential Jev round trips.
     spans = extract_value_spans(goal)
-
-    async def _pick_value():
-        if not spans:
-            return None
-        return await jev.ask(
-            {"goal": goal, "candidate_values": spans},
-            {
-                "value": Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans}),
-                "any_fit": Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?"),
-            },
-        )
-
-    async def _narrow_field() -> NarrowVerdict:
-        # A field's label embeds its live text, so it reads as a new candidate once typed into --
-        # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
-        loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(elements) <= 3 else {}
-        return await narrow_and_pick(
-            jev, goal, list(elements),
-            instructions="Which on-screen field should receive text for this goal?",
-            fit_instructions=fit_instructions,
-            describe=lambda c: elements[c].description or c,
-            **loose,
-        )
-
     cache_key = (foreground_package(dump_xml), goal)
-    field_verdict, answers = await asyncio.gather(
-        _cached_or_narrow(cache_key, elements, _narrow_field, verbose=verbose),
-        _pick_value(),
-    )
+    cached = _ELEMENT_CACHE.get(cache_key)
+    if cached in elements:
+        if verbose:
+            print(f"cache hit: {cached!r} still on screen, skipping Jev narrowing")
+        field_verdict = NarrowVerdict(cached, 1.0, 1.0, 1.0, [cached])
+        answers = await _pick_value(jev, goal, spans)
+    else:
+        field_verdict, answers = await _fused_field_and_value(jev, goal, elements, spans, fit_instructions)
+        if field_verdict.ok:
+            _ELEMENT_CACHE[cache_key] = field_verdict.choice
     if verbose:
         print(f"field shortlist: {field_verdict.shortlist}")
         print(f"Jev picked field: {field_verdict.choice} (confidence {field_verdict.confidence:.2f}, fit {field_verdict.fit:.2f})")
