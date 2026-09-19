@@ -7,3 +7,4 @@ __pycache__/
 experiment/
 window_dump.xml
 LOGBOOK.md
+.claude/ralph-loop.local.md
