@@ -70,3 +70,11 @@ async def test_read_only_command_is_approved_without_ever_calling_jev() -> None:
     result = await gate_command(None, CommandVariant("dumpsys battery", "read battery"), chosen_label="read the battery level")
     assert result.verdict == GateVerdict.APPROVED
     assert result.reason == "read_only"
+
+
+def test_batched_clear_keyevent_classifies_the_same_as_chained_form() -> None:
+    """propose_type's clear sequence: one `input keyevent` call with many keycodes,
+    not 200 `&&`-chained invocations -- same real argv shape, cheaper to compute."""
+    command = f"input tap 500 900 && input keyevent 123{' 67' * 200} && input text {shlex.quote('weather in helsinki')}"
+    assert not is_denied(command)
+    assert not is_read_only(command)

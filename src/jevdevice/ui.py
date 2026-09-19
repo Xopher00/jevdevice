@@ -460,8 +460,9 @@ async def propose_type(jev: JevClient, transport: AdbTransport, goal: str, *, ve
     value = answers["value"].choice
 
     target = elements[field_verdict.choice]
-    # Displayed text can be shorter than the real edit buffer (e.g. a shortened URL) -- a fixed generous count is safer than len(target.text).
-    clear = f"input keyevent 123 && {' && '.join(['input keyevent 67'] * 200)} && " if target.text else ""
+    # Fixed generous count is safer than len(target.text) (real content can outrun displayed
+    # text). One `input keyevent` call takes many keycodes -- avoids 200 separate process spawns.
+    clear = f"input keyevent 123{' 67' * 200} && " if target.text else ""
     command = CommandVariant(
         command=f"input tap {target.x} {target.y} && {clear}input text {shlex.quote(value)}",
         rationale=f"type {value!r} into {field_verdict.choice!r} per the goal",
