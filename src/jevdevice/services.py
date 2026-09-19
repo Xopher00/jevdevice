@@ -7,6 +7,7 @@ the same pattern ui.py uses for on-screen elements, applied to system services i
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 
 from .common import gated
@@ -52,12 +53,25 @@ def parse_dumpsys_services(raw: str) -> list[str]:
             if line.strip() and not line.strip().endswith(":") and "/" not in line]
 
 
+_NAME_VALUE = re.compile(r"(?:^|\s)name:(\S+)"), re.compile(r"(?:^|\s)value:(\S+)")
+
+
 def parse_key_value(raw: str) -> dict[str, str]:
+    """Most dumpsys services print one `key: value` per line (battery, wifi). `dumpsys
+    settings` instead prints several real `name:X ... value:Y` pairs on one line per entry
+    (e.g. `_id:2006 name:zen_mode pkg:android value:2 ...`) -- extract that shape directly
+    rather than mis-keying on the line's first token, which loses the real name entirely."""
+    name_re, value_re = _NAME_VALUE
     result: dict[str, str] = {}
     for line in raw.splitlines():
+        line = line.strip()
+        name_match, value_match = name_re.search(line), value_re.search(line)
+        if name_match and value_match:
+            result[name_match.group(1)] = value_match.group(1)
+            continue
         if ":" not in line:
             continue
-        key, _, value = line.strip().partition(":")
+        key, _, value = line.partition(":")
         key, value = key.strip(), value.strip()
         if key and value and " " not in key:
             result[key] = value
@@ -284,14 +298,18 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
 
     answer_key = None
     if parsed:
+        async def _field_values(shortlist: list[str]) -> dict[str, str]:
+            return {c: parsed[c] for c in shortlist}
+
         # min_fit is the real bar for this read-only pick -- raw Choice confidence spreads
-        # thin over 200+ plausible field names even for a clearly-correct answer (confirmed
-        # live: fit=0.88 but confidence=0.35 among 236 real bluetooth fields).
+        # thin over 200+ plausible field names even for a clearly-correct answer. evidence_for
+        # attaches real values only to the round-2 shortlist, not every round-1 chunk --
+        # dumpsys settings alone can parse to 2000+ real fields.
         field_verdict = await narrow_and_pick(
             jev, goal, list(parsed),
             instructions="Which real field would answer the goal?",
             fit_instructions="Does the field {candidate} actually answer the goal?",
-            state_extra={"parsed_fields": parsed},
+            evidence_for=_field_values,
             accept_any_fitting=True,
         )
         if field_verdict.ok:
