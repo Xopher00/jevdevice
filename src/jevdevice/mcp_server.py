@@ -62,7 +62,8 @@ def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: flo
 
 def _toggle_response(outcome: ToggleOutcome) -> dict:
     return {
-        "status": "ok" if not outcome.reasons else "unverified",
+        # Weakest-link status: a clean resolve with a low post-verify `satisfied` still isn't "ok".
+        "status": "ok" if not outcome.reasons and outcome.satisfied >= 0.5 else "unverified",
         "exit_code": outcome.exit_code,
         "check_service": outcome.check_service,
         "satisfied": outcome.satisfied,
@@ -89,8 +90,15 @@ def _launch_response(result: LaunchOutcome) -> dict:
 
 
 def _dumpsys_response(outcome: DumpsysOutcome) -> dict:
+    # Weakest-link status: resolving the service but not the answer field is real, not "ok".
+    if outcome.parsed is None:
+        status = "escalated"
+    elif outcome.answer_key is None:
+        status = "unverified"
+    else:
+        status = "ok"
     return {
-        "status": "ok" if outcome.parsed is not None else "escalated",
+        "status": status,
         "service": outcome.service,
         "answer": {outcome.answer_key: outcome.parsed[outcome.answer_key]} if outcome.answer_key else None,
         "parsed": outcome.parsed,
