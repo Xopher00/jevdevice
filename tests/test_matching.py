@@ -128,3 +128,16 @@ def test_extract_value_spans_deduplicates_and_drops_empty() -> None:
     spans = extract_value_spans("open the app")
     assert "" not in spans
     assert len(spans) == len(set(spans))
+
+
+def test_extract_value_spans_stops_at_a_comma_between_multiple_values() -> None:
+    goal = "address it to test@example.com, with the subject Test Chain, and the body hello"
+    spans = extract_value_spans(goal)
+    assert "test@example.com" in spans
+    assert not any("," in s for s in spans)
+    assert not any(len(s) > 60 for s in spans)
+
+
+def test_extract_value_spans_keeps_a_period_inside_a_value() -> None:
+    assert "test@example.com" in extract_value_spans("go to test@example.com")
+    assert any(s.endswith("3.14") for s in extract_value_spans("search for pi is 3.14"))

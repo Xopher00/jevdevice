@@ -206,13 +206,20 @@ async def _propose_gesture(
     return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons)
 
 
-async def propose_tap(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> TapProposal:
-    """Narrow real on-screen elements + gate the resulting tap. No execution."""
+async def propose_tap(
+    jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
+    fit_instructions: str = "Would tapping {candidate} actually perform the goal?",
+) -> TapProposal:
+    """Narrow real on-screen elements + gate the resulting tap. No execution. `fit_instructions`
+    defaults to a single-step framing ("actually perform the goal") -- a multi-step caller (see
+    experiment/action_chain.py) can override it to ask about progress instead, since no single
+    tap performs a whole multi-clause goal (confirmed live: fit 0.18 on a correctly-labeled
+    real button, using the default wording, when the goal described several remaining steps)."""
     return await _propose_gesture(
         jev, transport, goal,
         parse_elements=parse_actionable_elements,
         pick_instructions="Which on-screen element would perform this goal?",
-        fit_instructions="Would tapping {candidate} actually perform the goal?",
+        fit_instructions=fit_instructions,
         safe_instructions=TAP_SAFE_INSTRUCTIONS,
         command_for=lambda el: f"input tap {el.x} {el.y}",
         chosen_label_for=lambda c: f"tap {c}",
@@ -227,14 +234,18 @@ LONG_PRESS_SAFE_INSTRUCTIONS = (
 )
 
 
-async def propose_long_press(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> TapProposal:
+async def propose_long_press(
+    jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
+    fit_instructions: str = "Would long-pressing {candidate} actually perform the goal?",
+) -> TapProposal:
     """Narrow real long-clickable elements + gate the resulting long-press. No execution --
-    execute_tap runs it (a long-press is just `input swipe` with start==end)."""
+    execute_tap runs it (a long-press is just `input swipe` with start==end). `fit_instructions`
+    default is single-step framing; see propose_tap for why a multi-step caller overrides it."""
     return await _propose_gesture(
         jev, transport, goal,
         parse_elements=parse_long_clickable_elements,
         pick_instructions="Which on-screen element would this goal want long-pressed?",
-        fit_instructions="Would long-pressing {candidate} actually perform the goal?",
+        fit_instructions=fit_instructions,
         safe_instructions=LONG_PRESS_SAFE_INSTRUCTIONS,
         command_for=lambda el: f"input swipe {el.x} {el.y} {el.x} {el.y} 800",
         chosen_label_for=lambda c: f"long-press {c}",
@@ -423,8 +434,13 @@ def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
     return tuple(reasons)
 
 
-async def propose_type(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> TypeProposal:
-    """Narrow real editable fields + extract/pick the real value to type + gate. No execution."""
+async def propose_type(
+    jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
+    fit_instructions: str = "Would typing into {candidate} actually serve the goal?",
+) -> TypeProposal:
+    """Narrow real editable fields + extract/pick the real value to type + gate. No execution.
+    `fit_instructions` default is single-step framing; see propose_tap for why a multi-step
+    caller overrides it."""
     dump_xml = await dump_screen(transport)
     elements = parse_editable_elements(dump_xml)
     if verbose:
@@ -454,7 +470,7 @@ async def propose_type(jev: JevClient, transport: AdbTransport, goal: str, *, ve
         return await narrow_and_pick(
             jev, goal, list(elements),
             instructions="Which on-screen field should receive text for this goal?",
-            fit_instructions="Would typing into {candidate} actually serve the goal?",
+            fit_instructions=fit_instructions,
             describe=lambda c: elements[c].description or c,
             **loose,
         )

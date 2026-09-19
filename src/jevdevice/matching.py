@@ -8,7 +8,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-VALUE_PREPOSITIONS = ("for", "to", "into", "with")
+VALUE_PREPOSITIONS = ("for", "to", "into", "with", "and")
 
 
 def extract_value_spans(goal: str) -> list[str]:
@@ -17,12 +17,15 @@ def extract_value_spans(goal: str) -> list[str]:
     generates the text itself (docs.typesafe.ai/cookbooks/
     pre_parsed_value_extraction_cookbook.md). Quoted spans, plus the trailing
     clause after an ordinary English preposition -- grammatical function words,
-    not per-goal templates -- so this generalizes across any goal phrasing."""
+    not per-goal templates -- so this generalizes across any goal phrasing.
+    A comma ends a clause early (confirmed live: a goal naming several values,
+    "to X, with Y, and Z", was swallowing all three into one span without this --
+    a period doesn't, since one can be part of the value itself, e.g. an email)."""
     spans: list[str] = []
     for match in re.finditer(r"['\"]([^'\"]+)['\"]", goal):
         spans.append(match.group(1))
     for prep in VALUE_PREPOSITIONS:
-        match = re.search(rf"\b{prep}\s+(.+?)[.!?]?$", goal, re.IGNORECASE)
+        match = re.search(rf"\b{prep}\s+(.+?)(?:,|[.!?]?$)", goal, re.IGNORECASE)
         if match:
             spans.append(match.group(1).strip())
     seen: set[str] = set()
