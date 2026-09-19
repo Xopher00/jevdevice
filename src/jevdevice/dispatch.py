@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from .app_launch import launch_app_for_goal
 from .common import bootstrap, gated
+from .elements import dump_screen, screen_summary
 from .gate import CommandVariant, confirm_with_human
 from .jev import Choice, JevClient, Noul
 from .services import (
@@ -63,16 +64,32 @@ class KindPick:
     reasons: tuple[str, ...] = ()
 
 
-async def pick_kind(jev: JevClient, goal: str, *, verbose: bool = True) -> KindPick:
+async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = None, *, verbose: bool = True) -> KindPick:
     """Which ONE atomic action kind this goal is asking for -- the calling agent
     (human at the CLI, or an LLM composing MCP tool calls) decides sequencing;
-    this only ever resolves a single goal to a single kind."""
+    this only ever resolves a single goal to a single kind. `transport`, when given,
+    grounds the pick in what's really on screen (confirmed live: without it, an
+    ambiguous goal like "search for X" can't be told apart from "open an app named X")."""
     if verbose:
         print("--- Jev picks the action kind (real Choice over ACTION_KINDS) ---")
+    state: dict = {"goal": goal, "action_options": ACTION_KINDS}
+    kind_instructions = "Which ONE action would this goal have you perform?"
+    if transport is not None:
+        try:
+            state["screen"] = screen_summary(await dump_screen(transport), goal=goal)
+            kind_instructions += (
+                " screen describes the real device right now: screen.editable_fields lists "
+                "real text fields actually on screen, screen.on_screen every real described "
+                "element, screen.foreground_package the app in front. A goal naming typing or "
+                "searching, when a real editable field is already on screen, is type_text, not "
+                "open_app."
+            )
+        except Exception:
+            pass
     answers = await jev.ask(
-        {"goal": goal, "action_options": ACTION_KINDS},
+        state,
         {
-            "kind": Choice(instructions="Which ONE action would this goal have you perform?", criteria=ACTION_KINDS),
+            "kind": Choice(instructions=kind_instructions, criteria=ACTION_KINDS),
             "any_fit": Noul(instructions="Given action_options, does any of them fit this goal?"),
         },
     )
@@ -156,7 +173,7 @@ async def run_toolkit(jev: JevClient, transport: AdbTransport, goal: str, *, ver
     run this (or the matching MCP tool) once per step."""
     if verbose:
         print(f"goal: {goal!r}\n")
-    pick = await pick_kind(jev, goal, verbose=verbose)
+    pick = await pick_kind(jev, goal, transport, verbose=verbose)
     if pick.kind is None:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(pick.reasons)}")

@@ -213,7 +213,7 @@ async def device_do(
     default since an image costs real context; ask for one at a checkpoint, not after every
     single step in a sequence. Never plans or chains more than one action; sequencing multiple
     goals is still the calling agent's job."""
-    kind_pick = await pick_kind(jev, goal, verbose=False)
+    kind_pick = await pick_kind(jev, goal, transport, verbose=False)
     kind = kind_pick.kind
     if kind is None:
         return await _with_screenshot({"status": "escalated", "reasons": list(kind_pick.reasons)}, include=include_screenshot)
