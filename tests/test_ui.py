@@ -128,6 +128,20 @@ def test_parse_editable_elements_labels_an_unlabeled_field_from_its_ancestor() -
     assert (elements[label].x, elements[label].y) == (576, 533)
 
 
+def test_parse_actionable_elements_labels_an_unlabeled_clickable_node_from_its_ancestor() -> None:
+    dump_xml = (
+        '<hierarchy>'
+        '<node text="" resource-id="com.example:id/toolbar_more" content-desc="" '
+        'class="android.widget.LinearLayout" clickable="false" bounds="[0,0][100,100]">'
+        '<node text="" resource-id="" content-desc="" class="android.widget.ImageButton" '
+        'clickable="true" bounds="[10,10][90,90]"/>'
+        '</node>'
+        '</hierarchy>'
+    )
+    elements = parse_actionable_elements(dump_xml)
+    assert list(elements) == ["ImageButton under resource-id='toolbar_more'"]
+
+
 def test_parse_all_elements_unaffected_by_the_label_context_fallback() -> None:
     dump_xml = (
         '<hierarchy>'

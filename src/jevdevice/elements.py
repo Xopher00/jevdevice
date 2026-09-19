@@ -132,8 +132,9 @@ def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, l
 
 def parse_actionable_elements(dump_xml: str) -> dict[str, Element]:
     """Every real clickable node, plus a labeled node under a clickable container --
-    Android's own signal for "this is tappable"."""
-    return _parse_elements(dump_xml, lambda attrs: attrs.get("clickable") == "true", ancestor_attr="clickable")
+    Android's own signal for "this is tappable". `label_context=True`: a clickable node with
+    none of its own text/resource-id/content-desc is still a real tap target, not noise."""
+    return _parse_elements(dump_xml, lambda attrs: attrs.get("clickable") == "true", ancestor_attr="clickable", label_context=True)
 
 
 # A subclass's own class name doesn't always contain "EditText" -- confirmed live:
@@ -161,9 +162,7 @@ def parse_all_elements(dump_xml: str) -> dict[str, Element]:
 
 def count_unlabeled_interactive(dump_xml: str) -> dict[str, int]:
     """Free (no Jev) structural tally of real clickable/long-clickable nodes with none of
-    text/resource-id/content-desc -- the exact shape bug 9 found parse_editable_elements
-    silently dropping. Used by the audit crawler to measure real prevalence across many
-    screens before deciding whether to extend `label_context` beyond editable fields."""
+    text/resource-id/content-desc."""
     root = ET.fromstring(dump_xml)
     counts = {"clickable": 0, "clickable_unlabeled": 0, "long_clickable": 0, "long_clickable_unlabeled": 0}
     for node in root.iter("node"):
