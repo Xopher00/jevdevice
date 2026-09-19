@@ -49,20 +49,44 @@ def _nearest_ancestor_bounds(node, parent_of: dict, attr: str) -> str | None:
     return None
 
 
-def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None) -> dict[str, Element]:
+def _short_class(class_name: str) -> str:
+    return class_name.rsplit(".", 1)[-1] or "element"
+
+
+def _short_id(resource_id: str) -> str:
+    return resource_id.rsplit("/", 1)[-1]
+
+
+def _context_label(node, parent_of: dict, attrs: dict) -> str | None:
+    """A real, interactable node with none of its own text/resource-id/content-desc (confirmed
+    live: Gmail's To field is a real, focused, unlabeled EditText) still needs a real identity --
+    borrow the nearest labeled ancestor's, since a layout container's own id is real context,
+    never invented content."""
+    ancestor = parent_of.get(node)
+    while ancestor is not None:
+        for key in ("resource-id", "content-desc", "text"):
+            value = ancestor.attrib.get(key)
+            if value:
+                shown = _short_id(value) if key == "resource-id" else value
+                return f"{_short_class(attrs.get('class', ''))} under {key}={shown!r}"
+        ancestor = parent_of.get(ancestor)
+    return None
+
+
+def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, label_context: bool = False) -> dict[str, Element]:
     """Every real node passing `is_match` (a real Android accessibility signal, never a
     per-app guess), described by whichever of its own real fields are non-empty. A labeled
     node that fails `is_match` but has a real ancestor matching `ancestor_attr` still counts,
-    using that ancestor's bounds as the real tap target."""
+    using that ancestor's bounds as the real tap target. `label_context` additionally keeps a
+    matching node that has none of its own descriptive fields, labeled from a real ancestor."""
     root = ET.fromstring(dump_xml)
-    parent_of = {child: parent for parent in root.iter() for child in parent} if ancestor_attr else {}
+    parent_of = {child: parent for parent in root.iter() for child in parent}
     elements: dict[str, Element] = {}
     for node in root.iter("node"):
         attrs = node.attrib
         described = {k: v for k in ("text", "resource-id", "content-desc") if (v := attrs.get(k))}
-        if not described:
-            continue
-        if is_match(attrs):
+        matched = is_match(attrs)
+        if matched:
             bounds = attrs.get("bounds", "")
         elif ancestor_attr:
             bounds = _nearest_ancestor_bounds(node, parent_of, ancestor_attr)
@@ -70,11 +94,18 @@ def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None) -
             bounds = None
         if not bounds:
             continue
+        if described:
+            label = " ".join(f"{k}={v!r}" for k, v in described.items())
+        elif label_context and matched:
+            label = _context_label(node, parent_of, attrs)
+            if label is None:
+                continue
+        else:
+            continue
         match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
         if not match:
             continue
         left, top, right, bottom = (int(n) for n in match.groups())
-        label = " ".join(f"{k}={v!r}" for k, v in described.items())
         elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""))
     return elements
 
@@ -93,7 +124,7 @@ _EDITABLE_CLASSES = ("EditText", "AutoCompleteTextView")
 def parse_editable_elements(dump_xml: str) -> dict[str, Element]:
     """Every real node whose Android `class` is (a subclass of) EditText -- the
     OS's own signal for "this accepts text input", not a per-app guess."""
-    return _parse_elements(dump_xml, lambda attrs: any(c in attrs.get("class", "") for c in _EDITABLE_CLASSES))
+    return _parse_elements(dump_xml, lambda attrs: any(c in attrs.get("class", "") for c in _EDITABLE_CLASSES), label_context=True)
 
 
 def parse_long_clickable_elements(dump_xml: str) -> dict[str, Element]:

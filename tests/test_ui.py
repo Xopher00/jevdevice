@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jevdevice.elements import describe_screen, parse_actionable_elements
+from jevdevice.elements import describe_screen, parse_actionable_elements, parse_all_elements, parse_editable_elements
 from jevdevice.ui import _ELEMENT_CACHE, _LRUCache, _no_editable_field_reasons
 
 
@@ -88,3 +88,32 @@ def test_no_editable_field_reasons_with_nothing_clickable_either() -> None:
     dump_xml = '<hierarchy><node text="hello" resource-id="" content-desc="" clickable="false" bounds="[0,0][100,50]"/></hierarchy>'
     reasons = _no_editable_field_reasons(dump_xml, "type into the search field")
     assert reasons == ("no real editable fields (EditText/AutoCompleteTextView) on screen",)
+
+
+def test_parse_editable_elements_labels_an_unlabeled_field_from_its_ancestor() -> None:
+    dump_xml = (
+        '<hierarchy>'
+        '<node text="" resource-id="com.example:id/peoplekit_autocomplete_bar_to" content-desc="" '
+        'class="android.widget.RelativeLayout" clickable="false" bounds="[0,449][1080,617]">'
+        '<node text="" resource-id="" content-desc="" class="android.widget.EditText" '
+        'clickable="true" focused="true" bounds="[216,461][936,605]"/>'
+        '</node>'
+        '</hierarchy>'
+    )
+    elements = parse_editable_elements(dump_xml)
+    assert list(elements) == ["EditText under resource-id='peoplekit_autocomplete_bar_to'"]
+    label = "EditText under resource-id='peoplekit_autocomplete_bar_to'"
+    assert (elements[label].x, elements[label].y) == (576, 533)
+
+
+def test_parse_all_elements_unaffected_by_the_label_context_fallback() -> None:
+    dump_xml = (
+        '<hierarchy>'
+        '<node text="" resource-id="parent" content-desc="" class="android.widget.RelativeLayout" '
+        'clickable="false" bounds="[0,0][100,100]">'
+        '<node text="" resource-id="" content-desc="" class="android.widget.EditText" '
+        'clickable="true" bounds="[0,0][100,50]"/>'
+        '</node>'
+        '</hierarchy>'
+    )
+    assert list(parse_all_elements(dump_xml)) == ["resource-id='parent'"]
