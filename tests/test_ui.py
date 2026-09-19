@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from jevdevice.elements import describe_screen, parse_actionable_elements
-from jevdevice.ui import _ELEMENT_CACHE, _LRUCache
+from jevdevice.ui import _ELEMENT_CACHE, _LRUCache, _no_editable_field_reasons
 
 
 def test_lru_cache_evicts_oldest_past_capacity() -> None:
@@ -70,3 +70,21 @@ def test_describe_screen_goal_relevant_label_survives_truncation() -> None:
     nodes += '<node text="search field" resource-id="" content-desc="" clickable="true" bounds="[0,100][100,110]"/>'
     dump_xml = f"<hierarchy>{nodes}</hierarchy>"
     assert "text='search field'" in describe_screen(dump_xml, goal="type into the search field", limit=2)
+
+
+def test_no_editable_field_reasons_names_a_real_facade_candidate() -> None:
+    dump_xml = (
+        '<hierarchy>'
+        '<node text="" resource-id="fake_search_box" content-desc="Search" class="android.widget.LinearLayout" '
+        'clickable="true" bounds="[0,0][100,50]"/>'
+        '</hierarchy>'
+    )
+    reasons = _no_editable_field_reasons(dump_xml, "type into the search field")
+    assert reasons[0] == "no real editable fields (EditText/AutoCompleteTextView) on screen"
+    assert "fake_search_box" in reasons[1] or "Search" in reasons[1]
+
+
+def test_no_editable_field_reasons_with_nothing_clickable_either() -> None:
+    dump_xml = '<hierarchy><node text="hello" resource-id="" content-desc="" clickable="false" bounds="[0,0][100,50]"/></hierarchy>'
+    reasons = _no_editable_field_reasons(dump_xml, "type into the search field")
+    assert reasons == ("no real editable fields (EditText/AutoCompleteTextView) on screen",)

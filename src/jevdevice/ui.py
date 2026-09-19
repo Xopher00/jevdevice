@@ -31,7 +31,7 @@ from .gate import (
     resolve_gate,
 )
 from .jev import Choice, JevClient, Noul
-from .matching import NarrowVerdict, confidence_gate, decide, extract_value_spans
+from .matching import NarrowVerdict, confidence_gate, decide, extract_value_spans, fuzzy_narrow
 from .narrowing import CHUNK_SIZE, narrow_and_pick
 from .transport import AdbTransport
 
@@ -406,12 +406,30 @@ class TypeProposal:
     reasons: tuple[str, ...] = ()
 
 
+def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
+    """A facade search bar (e.g. a real button styled to look like a field) is a real,
+    common case: zero real EditText/AutoCompleteTextView nodes, but a real clickable
+    candidate that would open one. Name it so the calling agent knows to try a tap first --
+    device_do still never chains actions itself."""
+    reasons = ["no real editable fields (EditText/AutoCompleteTextView) on screen"]
+    clickable = parse_actionable_elements(dump_xml)
+    if clickable:
+        nearest = fuzzy_narrow(goal, list(clickable), limit=3)
+        reasons.append(
+            f"{len(clickable)} real clickable elements are present and one may need to be "
+            f"tapped first to open a real field, e.g. {', '.join(nearest)}"
+        )
+    return tuple(reasons)
+
+
 async def propose_type(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> TypeProposal:
     """Narrow real editable fields + extract/pick the real value to type + gate. No execution."""
     dump_xml = await dump_screen(transport)
     elements = parse_editable_elements(dump_xml)
     if verbose:
         print(f"{len(elements)} real editable elements on screen")
+    if not elements:
+        return TypeProposal(None, None, 0.0, reasons=_no_editable_field_reasons(dump_xml, goal))
 
     # Field pick (needs the real screen) and value extraction (needs only goal text) are
     # independent -- run them concurrently instead of paying two sequential Jev round trips.
