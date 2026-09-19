@@ -58,10 +58,7 @@ def _short_id(resource_id: str) -> str:
 
 
 def _context_label(node, parent_of: dict, attrs: dict) -> str | None:
-    """A real, interactable node with none of its own text/resource-id/content-desc (confirmed
-    live: Gmail's To field is a real, focused, unlabeled EditText) still needs a real identity --
-    borrow the nearest labeled ancestor's, since a layout container's own id is real context,
-    never invented content."""
+    """An unlabeled real node borrows the nearest labeled ancestor's real identity."""
     ancestor = parent_of.get(node)
     while ancestor is not None:
         for key in ("resource-id", "content-desc", "text"):

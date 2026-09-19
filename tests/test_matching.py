@@ -71,6 +71,44 @@ def test_decide_no_candidates_is_a_clean_reject() -> None:
     assert verdict.best_fit == 0.0
 
 
+def test_accept_any_fitting_picks_the_best_fit_over_a_low_confidence_top_choice() -> None:
+    """Real shape from the do-not-disturb bug: the Choice winner's own fit misses the
+    floor while another real, grounded candidate clears it -- accept that one instead
+    of escalating over a low-confidence pick among several plausible names."""
+    verdict = decide(
+        "notification", {"notification": 0.33, "settings": 0.26, "manager": 0.05}, confidence=0.18,
+        fits={"notification": 0.49, "settings": 0.57, "manager": 0.57},
+        enumerated=["notification", "settings", "manager"], accept_any_fitting=True,
+    )
+    assert verdict.ok
+    assert verdict.choice == "settings"
+    assert verdict.alternatives == ["manager"]
+
+
+def test_accept_any_fitting_still_escalates_when_nothing_fits() -> None:
+    verdict = decide(
+        "gmail", {"gmail": 0.9, "maps": 0.1}, confidence=0.9,
+        fits={"gmail": 0.2, "maps": 0.1}, enumerated=["gmail", "maps"], accept_any_fitting=True,
+    )
+    assert not verdict.ok
+
+
+def test_accept_any_fitting_still_rejects_an_ungrounded_fit() -> None:
+    verdict = decide(
+        "invented", {"invented": 0.9}, confidence=0.9,
+        fits={"invented": 0.9}, enumerated=["gmail", "maps"], accept_any_fitting=True,
+    )
+    assert not verdict.ok
+
+
+def test_accept_any_fitting_false_by_default_keeps_existing_behavior() -> None:
+    verdict = decide(
+        "notification", {"notification": 0.33, "settings": 0.26}, confidence=0.18,
+        fits={"notification": 0.49, "settings": 0.57}, enumerated=["notification", "settings"],
+    )
+    assert not verdict.ok
+
+
 def test_extract_value_spans_finds_quoted_text() -> None:
     assert "hello world" in extract_value_spans("type 'hello world' into the box")
 

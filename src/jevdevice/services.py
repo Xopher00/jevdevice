@@ -265,6 +265,7 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
         jev, goal, services,
         instructions="Which service would answer this goal?",
         fit_instructions="Would `dumpsys {candidate}` actually contain the answer to the goal?",
+        accept_any_fitting=True,
     )
     if verbose:
         print(f"shortlist: {verdict.shortlist}")
@@ -291,7 +292,7 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
             instructions="Which real field would answer the goal?",
             fit_instructions="Does the field {candidate} actually answer the goal?",
             state_extra={"parsed_fields": parsed},
-            min_confidence=0.0, min_margin=0.0,
+            accept_any_fitting=True,
         )
         if field_verdict.ok:
             answer_key = field_verdict.choice

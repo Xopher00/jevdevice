@@ -83,6 +83,7 @@ class NarrowVerdict:
     best_fit: float                 # max fit Noul across the whole shortlist
     shortlist: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)  # every signal that fired
+    alternatives: list[str] = field(default_factory=list)  # other real candidates that also cleared min_fit
 
     @property
     def ok(self) -> bool:
@@ -93,19 +94,30 @@ def decide(
     choice: str | None, probabilities: dict[str, float], confidence: float,
     fits: dict[str, float], enumerated: Sequence[str],
     *, min_fit: float = 0.5, min_confidence: float = 0.6, min_margin: float = 0.15,
+    accept_any_fitting: bool = False,
 ) -> NarrowVerdict:
     """MAX-aggregated verdict (sde_cascade: one red flag escalates, never
     averaged into silence). `fits` gives an independent, unnormalized signal
     per shortlist entry, which is what lets "none of these actually fit" be
     representable at all — Choice probabilities always sum to 1, so a
     confidence/margin check alone can only ever say "the top pick is unsure",
-    never "everything here is bad"."""
+    never "everything here is bad".
+
+    `accept_any_fitting`: for read-only queries where several real candidates can be
+    independently correct -- skips the confidence/margin gate when any candidate clears
+    `min_fit`, which stays the only real safety net either way."""
     shortlist = list(fits)
     best_fit = max(fits.values(), default=0.0)
+    enumerated_set = set(enumerated)
+    fitting = [c for c in shortlist if fits[c] >= min_fit and c in enumerated_set]
+
+    if accept_any_fitting and fitting:
+        winner = max(fitting, key=lambda c: (fits[c], probabilities.get(c, 0.0)))
+        return NarrowVerdict(winner, confidence, fits[winner], best_fit, shortlist, [], [c for c in fitting if c != winner])
+
     winner_fit = fits.get(choice, 0.0) if choice is not None else 0.0
     reasons = []
-
-    if choice is None or choice not in set(enumerated):
+    if choice is None or choice not in enumerated_set:
         reasons.append("winner not grounded in the real enumeration")
     if best_fit < min_fit:
         reasons.append(f"nothing in the shortlist fits (best {best_fit:.2f} below {min_fit})")
