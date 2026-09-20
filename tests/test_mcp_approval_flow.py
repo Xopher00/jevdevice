@@ -6,14 +6,12 @@ request/response pair, not a blocking prompt disguised as one.
 from __future__ import annotations
 
 import json
-import os
 
 from mcp.shared.memory import create_connected_server_and_client_session
 
-# mcp_server module-level bootstrap() needs an API key to import at all; a placeholder
-# is enough for collection, the real key is only needed once the test actually calls Jev.
-os.environ.setdefault("TYPESAFE_AI_API", "placeholder-for-import")
-
+# The placeholder TYPESAFE_AI_API line is gone (Phase 2 T3): bootstrap() requires
+# the key only for the jev engine, and test_decision_log's module import (which
+# runs first in a full-suite collection) provides one for that case.
 from jevdevice.common import SERIAL
 from jevdevice.elements import dump_screen, parse_actionable_elements
 from jevdevice.mcp_server import mcp

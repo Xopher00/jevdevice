@@ -23,7 +23,7 @@ import httpx
 from pydantic import BaseModel
 
 from . import decision_log
-from .ledger import Usage, UsageLedger
+from .ledger import EngineInfo, Usage, UsageLedger
 
 DECISIONS_URL = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-1.13.0"
@@ -113,6 +113,9 @@ class JevClient:
         self._client = httpx.AsyncClient(timeout=30)
         self._journal = journal  # None -> module-level default journal (decision_log.get_journal())
         self.usage = UsageLedger()
+        # Journal rows carry engine+model_revision already; the ledger keeps the
+        # same identity so token snapshots from both engines distinguish themselves.
+        self.usage.record_engine(EngineInfo(engine="jev", model_revision=model))
 
     async def aclose(self) -> None:
         await self._client.aclose()
