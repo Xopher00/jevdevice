@@ -26,6 +26,7 @@ predict(model="typed-decisions") routes to the pinned agent.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 
 from . import decision_log
@@ -48,7 +49,11 @@ class LayaClient(JevClient):
     offline) inside a worker thread so the event loop never blocks. Concurrent
     asks serialize on one lock: laya's Agent is not documented as thread-safe,
     and one forward pass is shorter than any retry would be. Real concurrent
-    asks (e.g. a shadow-mode second engine) want an explicit knob first."""
+    asks (P5's shadow mode) are gated behind the JEV_SHADOW_MODE knob, whose
+    default "after" keeps the primary ask's latency untouched; "concurrent"
+    overlaps shadow and primary, still serialized on _ask_lock between
+    themselves.
+    """
 
     def __init__(
         self, *, journal: decision_log.DecisionJournal | None = None,
@@ -106,18 +111,22 @@ class LayaClient(JevClient):
         self, state: object, questions: dict[str, Question], *,
         phase: str | None = None, goal_id: str | None = None,
         call_id: str | None = None, truncation: dict | None = None,
+        shadow_of: str | None = None,
     ) -> dict[str, Answer]:
         """Same contract as JevClient.ask: identical question serialization
         (the frozen wire shape), typed answers out, a decision row per call.
         Budget overflow -- laya raises ValueError when cfg max_len cuts below
         the option block -- surfaces as JevError like every other
         engine failure; the message may blame head_max_len even when max_len
-        was the trigger, so catch the type, never parse the text."""
+        was the trigger, so catch the type, never parse the text.
+        shadow_of (P5): set only by the shadow observer -- links this row back
+        to the primary jev row's call_id; primary asks never set it."""
         if not questions:
             raise JevError("ask() requires at least one question")
         call_id = call_id or str(uuid.uuid4())
         scope_goal_id, scope_goal = decision_log.current_goal()
         usage_before = self.usage.snapshot()
+        started = time.perf_counter()
         wire_questions = {name: q.model_dump(mode="json", exclude_none=True) for name, q in questions.items()}
         router = await self._router_ready()
         answers: dict[str, Answer] | None = None
@@ -162,5 +171,7 @@ class LayaClient(JevClient):
                     "input_tokens": usage_after.input_tokens - usage_before.input_tokens,
                     "output_tokens": usage_after.output_tokens - usage_before.output_tokens,
                 },
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                shadow_of=shadow_of,
             )
         return answers

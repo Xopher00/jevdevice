@@ -184,10 +184,15 @@ class DecisionJournal:
         self, *, call_id: str, engine: str, model_revision: str, phase: str | None = None,
         state=None, questions=None, answers=None, truncation=None, usage=None, error=None,
         goal: str | None = None, goal_id: str | None = None,
+        elapsed_ms: float | None = None, shadow_of: str | None = None,
     ) -> None:
         """One row per ask(): the full replayable decision. `answers` is the FULL
         distribution (probabilities/confidence/noul), not just the winning pick;
-        on failure `answers` is None and `error` carries the message."""
+        on failure `answers` is None and `error` carries the message.
+        elapsed_ms (P5): this ask()'s wall time. shadow_of (P5): set only on
+        shadow rows -- the primary row's call_id this observation shadows; a
+        None value means the row IS a primary decision (P4.5/analyses key off
+        this, so a shadow row can never be mistaken for a real one)."""
         if not self.enabled:
             return
         row = {
@@ -205,6 +210,8 @@ class DecisionJournal:
             "truncation": truncation,
             "usage": usage,
             "error": error,
+            "elapsed_ms": elapsed_ms,
+            "shadow_of": shadow_of,
         }
         try:
             self._append({key: self._blobify(value) for key, value in row.items()})

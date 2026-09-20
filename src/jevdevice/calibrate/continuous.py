@@ -152,9 +152,15 @@ def select_window(rows: list[dict], *, now: datetime | None = None,
     MIN_WINDOW_ROWS floor is met. Rows carry their own timestamps; the job is
     offline and deterministic for a given journal snapshot."""
     decisions = [row for row in rows if row.get("type") == "decision"]
+    # P5 shadow rows (engine=laya, shadow_of set) are NOT primary decisions:
+    # they must never enter the calibration window as laya observations, or a
+    # jev-primary session's shadowed traffic would masquerade as laya runtime
+    # mixture. Excluding rows only shrinks the sample -- never loosens a gate.
+    shadowed = [row for row in decisions if row.get("shadow_of") is not None]
+    decisions = [row for row in decisions if row.get("shadow_of") is None]
     if not decisions:
         return [], {"window_days": window_days, "from": None, "to": None,
-                    "n": 0, "min_rows_met": False}
+                    "n": 0, "min_rows_met": False, "shadow_rows_excluded": len(shadowed)}
     now = now or datetime.now()  # noqa: DTZ005 -- job-local clock, same family as row ts
     cutoff = window_cutoff(now, window_days=window_days)
     in_window = [r for r in decisions if _row_ts(r) >= cutoff]
@@ -174,6 +180,7 @@ def select_window(rows: list[dict], *, now: datetime | None = None,
         "n": n,
         "min_rows_met": n >= MIN_WINDOW_ROWS,
         "min_window_rows": MIN_WINDOW_ROWS,
+        "shadow_rows_excluded": len(shadowed),
     }
     return in_window, provenance
 

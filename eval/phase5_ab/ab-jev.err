@@ -1,0 +1,235 @@
+[09/21/26 00:33:28] INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+[09/21/26 00:33:30] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:31] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:32] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+[09/21/26 00:33:33] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:34] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:35] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:36] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:37] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+[09/21/26 00:33:38] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:39] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:40] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+[09/21/26 00:33:41] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:42] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:43] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:44] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:45] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:46] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:47] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:48] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:49] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:50] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:51] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:52] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:53] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:54] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:55] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:56] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+[09/21/26 00:33:57] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     Processing request of type            server.py:733
+                             CallToolRequest                                    
+[09/21/26 00:33:58] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:33:59] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:34:00] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+[09/21/26 00:34:01] INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             https://api.typesafe.ai/v1/systemon                
+                             e "HTTP/1.1 200 OK"                                

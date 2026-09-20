@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import shadow
 from .budget import (  # engine names live in budget.py
     ENGINE_ENV,
     ENGINES,
@@ -79,6 +80,10 @@ def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbT
         if not api_key:
             raise SystemExit("TYPESAFE_AI_API not set (required for the jev engine; JEV_ENGINE=laya runs in-process)")
         client: JevClient | LayaClient = JevClient(api_key)
+        # P5 shadow mode: while jev answers, a laya shadow observes and journals
+        # (JEV_SHADOW=0 opts out). The checkpoint loads lazily on the first
+        # shadowed ask, so this costs nothing until then.
+        shadow.attach(client)
     else:
         client = LayaClient(device=os.environ.get(DEVICE_ENV, DEFAULT_DEVICE))
     if not serial:

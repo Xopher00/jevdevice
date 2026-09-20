@@ -1,0 +1,29 @@
+=== SUMMARY ===
+{
+ "journal_rows": 769,
+ "shadow_rows": 69,
+ "primaries_shadowed": 69,
+ "overall": {
+  "n": 0,
+  "agreement": null,
+  "abstentions": 0,
+  "mean_abs_noul_delta": null
+ },
+ "per_phase": {},
+ "latency_ms": {
+  "jev_primary": {
+   "n": 88,
+   "p50_ms": 339.7,
+   "p95_ms": 738.4,
+   "min_ms": 263.9,
+   "max_ms": 1043.4
+  },
+  "laya_shadow": {
+   "n": 186,
+   "p50_ms": 18568.1,
+   "p95_ms": 32663.7,
+   "min_ms": 31.1,
+   "max_ms": 143842.3
+  }
+ }
+}

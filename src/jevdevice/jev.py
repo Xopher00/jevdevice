@@ -16,13 +16,14 @@ threshold was calibrated against one version's confidence computation.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from typing import Literal
 
 import httpx
 from pydantic import BaseModel
 
-from . import decision_log
+from . import decision_log, shadow
 from .ledger import EngineInfo, Usage, UsageLedger
 
 DECISIONS_URL = "https://api.typesafe.ai/v1/systemone"
@@ -116,6 +117,11 @@ class JevClient:
         # Journal rows carry engine+model_revision already; the ledger keeps the
         # same identity so token snapshots from both engines distinguish themselves.
         self.usage.record_engine(EngineInfo(engine="jev", model_revision=model))
+        # P5 shadow mode (shadow.py): a second engine observing this client's
+        # asks. None here -- common.bootstrap() attaches via shadow.attach();
+        # tests construct clients shadow-free.
+        self.shadow = None
+        self.shadow_tasks: set[asyncio.Task] = set()  # in-flight shadow asks; drained by aclose()
 
     @property
     def engine_name(self) -> str:
@@ -124,6 +130,9 @@ class JevClient:
         return self._engine
 
     async def aclose(self) -> None:
+        await shadow.drain(self)  # keep short shadow predicts, cancel cold loads
+        if self.shadow is not None:
+            await self.shadow.aclose()
         await self._client.aclose()
 
     async def ask(
@@ -144,7 +153,14 @@ class JevClient:
         call_id = call_id or str(uuid.uuid4())
         scope_goal_id, scope_goal = decision_log.current_goal()
         usage_before = self.usage.snapshot()
+        started = time.perf_counter()
         wire_questions = {name: q.model_dump(mode="json", exclude_none=True) for name, q in questions.items()}
+        # Shadow observation (P5): the second engine sees the same state and the
+        # SAME Question objects (it serializes them itself, identically), links
+        # its row back via shadow_of, and its answers go nowhere.
+        shadow.schedule(self, point="before_request", primary_call_id=call_id, state=state,
+                        questions=questions, phase=phase, goal_id=goal_id or scope_goal_id,
+                        truncation=truncation)
         body = {
             "model": self._model,
             "state": state,
@@ -192,13 +208,20 @@ class JevClient:
                     "input_tokens": usage_after.input_tokens - usage_before.input_tokens,
                     "output_tokens": usage_after.output_tokens - usage_before.output_tokens,
                 },
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
             )
+            # after-mode shadowing: only now, once the primary answer and row are
+            # final, does the second engine see the call (zero contention with it).
+            shadow.schedule(self, point="after_answer", primary_call_id=call_id, state=state,
+                            questions=questions, phase=phase, goal_id=goal_id or scope_goal_id,
+                            truncation=truncation)
         return answers
 
     def _emit_decision_row(
         self, *, call_id: str, phase: str | None, state: object,
         questions: dict, answers: dict[str, Answer] | None, error: str | None,
         truncation: dict | None, goal_id: str | None, goal: str | None, usage_delta: dict,
+        elapsed_ms: float | None = None, shadow_of: str | None = None,
     ) -> None:
         """Journal emission, fail-open: a journal failure must never break a live
         decision (DecisionJournal.record_* swallows and prints)."""
@@ -210,4 +233,5 @@ class JevClient:
             phase=phase, state=state, questions=questions,
             answers={name: answer.model_dump(mode="json") for name, answer in answers.items()} if answers else None,
             error=error, truncation=truncation, goal_id=goal_id, goal=goal, usage=usage_delta,
+            elapsed_ms=elapsed_ms, shadow_of=shadow_of,
         )
