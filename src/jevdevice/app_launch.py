@@ -7,9 +7,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+from . import question_sets
 from .budget import current_profile
 from .elements import dump_screen, foreground_package
-from .jev import JevClient, Noul
+from .jev import JevClient
 from .narrowing import narrow_and_pick
 from .transport import AdbTransport
 
@@ -32,8 +33,7 @@ async def verify_with_retry(
         observed = foreground_package(await dump_screen(transport))
         answers = await jev.ask(
             {"goal": goal, "chosen_package": chosen, "foreground_package": observed, "attempt": attempt},
-            {"satisfied": Noul(instructions="Is foreground_package the app named by chosen_package, or otherwise "
-                                             "evidence that the goal is now achieved for chosen_package?")},
+            {"satisfied": question_sets.noul("open_app.verify_satisfied")},
             phase="verify",
         )
         satisfied = answers["satisfied"].noul
@@ -61,8 +61,8 @@ async def launch_app_for_goal(jev: JevClient, transport: AdbTransport, goal: str
 
     verdict = await narrow_and_pick(
         jev, goal, packages,
-        instructions="Which package best satisfies the goal?",
-        fit_instructions="Is {candidate} the app the goal asks to open?",
+        instructions=question_sets.text("open_app.pick"),
+        fit_instructions=question_sets.text("open_app.fit"),
     )
     if verbose:
         print(f"shortlist: {verdict.shortlist}")

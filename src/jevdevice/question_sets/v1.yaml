@@ -1,0 +1,288 @@
+version: v1
+compiled: '2026-09-21'
+source: ui.py/gate.py/services.py/dispatch.py/app_launch.py/narrowing.py literals at the 12 ask() call
+  sites
+golden_set: decision journal (~/.jevdevice/journal); see eval/phase6_finetune/dataset_card.json
+questions:
+  recall.any:
+    type: noul
+    phase: recall
+    instructions: Could any of these candidates satisfy the goal?
+    witness_n: 457
+    validated: true
+  tap.pick:
+    type: choice
+    phase: recall
+    instructions: Which on-screen element would perform this goal?
+    witness_n: 2
+    validated: true
+  tap.fit:
+    type: noul
+    phase: ground
+    instructions: Would tapping {candidate} actually perform the goal?
+    witness_n: 38
+    validated: true
+  tap.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's target and effect match the chosen_action (same on-screen
+      element, same tap location -- check target_bounds against the coordinates in proposed_command)?
+      Answer no if it targets a different element, produces a different effect, or does anything beyond
+      the chosen_action.
+    witness_n: 5
+    validated: true
+  tap.safe_fused:
+    type: noul
+    phase: recall
+    instructions: chosen_action={chosen_action!r}. proposed_command={proposed_command!r}. target_bounds={target_bounds!r}.
+      Does the proposed_command's target and effect match the chosen_action (same on-screen element, same
+      tap location -- check target_bounds against the coordinates in proposed_command)? Answer no if it
+      targets a different element, produces a different effect, or does anything beyond the chosen_action.
+    witness_n: 38
+    validated: true
+  long_press.pick:
+    type: choice
+    phase: recall
+    instructions: Which on-screen element would this goal want long-pressed?
+    witness_n: 0
+    validated: false
+  long_press.fit:
+    type: noul
+    phase: ground
+    instructions: Would long-pressing {candidate} actually perform the goal?
+    witness_n: 0
+    validated: false
+  long_press.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's target match the chosen_action (same on-screen element,
+      same location -- check target_bounds against the coordinates in proposed_command)? Answer no if
+      it targets a different element or does anything beyond the chosen_action.
+    witness_n: 0
+    validated: false
+  long_press.safe_fused:
+    type: noul
+    phase: recall
+    instructions: chosen_action={chosen_action!r}. proposed_command={proposed_command!r}. target_bounds={target_bounds!r}.
+      Does the proposed_command's target match the chosen_action (same on-screen element, same location
+      -- check target_bounds against the coordinates in proposed_command)? Answer no if it targets a different
+      element or does anything beyond the chosen_action.
+    witness_n: 0
+    validated: false
+  type_field.pick:
+    type: choice
+    phase: fill
+    instructions: Which on-screen field should receive text for this goal?
+    witness_n: 0
+    validated: false
+  type_field.fit:
+    type: noul
+    phase: fill
+    instructions: Would typing into {candidate} actually serve the goal?
+    witness_n: 0
+    validated: false
+  type.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's target field and typed value match the chosen_action (same
+      on-screen field -- check target_bounds against the tap coordinates -- and the same value)? Answer
+      no if it targets a different field, types a different value, or does anything beyond the chosen_action.
+    witness_n: 0
+    validated: false
+  type_value.pick:
+    type: choice
+    phase: fill
+    instructions: Which of these is the text to type for this goal?
+    witness_n: 0
+    validated: false
+  type_value.any_fit:
+    type: noul
+    phase: fill
+    instructions: Given candidate_values, does any of them belong in a text field for this goal?
+    witness_n: 0
+    validated: false
+  scroll_to_find.pick:
+    type: choice
+    phase: ground
+    instructions: Which real on-screen item is the target this goal is scrolling to find?
+    witness_n: 0
+    validated: false
+  scroll_to_find.fit:
+    type: noul
+    phase: ground
+    instructions: Is {candidate} really the target this goal describes?
+    witness_n: 0
+    validated: false
+  swipe.pick:
+    type: choice
+    phase: fill
+    instructions: Which swipe direction does this goal want? 'scroll down'/'see more below' -> down; 'scroll
+      up'/'go back up' -> up; likewise left/right for horizontal content.
+    witness_n: 0
+    validated: false
+  swipe.any_fit:
+    type: noul
+    phase: fill
+    instructions: Given direction_options, does any of them fit this goal?
+    witness_n: 0
+    validated: false
+  swipe.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's swipe direction match the chosen_action (same direction)?
+      Answer no if it swipes a different direction or does anything beyond the chosen_action.
+    witness_n: 0
+    validated: false
+  keyevent.pick:
+    type: choice
+    phase: fill
+    instructions: Which key/button press would achieve this goal?
+    witness_n: 1
+    validated: true
+  keyevent.any_fit:
+    type: noul
+    phase: fill
+    instructions: Given key_options, does any of them fit this goal?
+    witness_n: 1
+    validated: true
+  keyevent.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's key press match the chosen_action (same key)? Answer no
+      if it presses a different key or does anything beyond the chosen_action.
+    witness_n: 0
+    validated: false
+  dnd.pick:
+    type: choice
+    phase: fill
+    instructions: Which Do Not Disturb mode does this goal want?
+    witness_n: 0
+    validated: false
+  dnd.any_fit:
+    type: noul
+    phase: fill
+    instructions: Given mode_options, does any of them fit this goal?
+    witness_n: 0
+    validated: false
+  dnd.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's Do Not Disturb mode match the chosen_action (same mode)?
+      Answer no if it sets a different mode or does anything beyond the chosen_action.
+    witness_n: 0
+    validated: false
+  toggle.service:
+    type: choice
+    phase: fill
+    instructions: Which service does the goal refer to?
+    witness_n: 9
+    validated: true
+  toggle.enabled:
+    type: choice
+    phase: fill
+    instructions: Does the goal want it turned on or off?
+    witness_n: 9
+    validated: true
+  toggle.names_one:
+    type: noul
+    phase: fill
+    instructions: Given radio_options, does the goal specifically ask about one of them?
+    witness_n: 9
+    validated: true
+  toggle.resolve_status.pick:
+    type: choice
+    phase: ground
+    instructions: Which dumpsys service would show this toggled service's real status?
+    witness_n: 24
+    validated: true
+  toggle.resolve_status.fit:
+    type: noul
+    phase: ground
+    instructions: Would `dumpsys {candidate}` actually show {toggled_service}'s real status?
+    witness_n: 48
+    validated: true
+  toggle.verify_satisfied:
+    type: noul
+    phase: verify
+    instructions: Given service_state, is the goal now achieved?
+    witness_n: 8
+    validated: true
+  dumpsys_query.pick:
+    type: choice
+    phase: ground
+    instructions: Which service would answer this goal?
+    witness_n: 77
+    validated: true
+  dumpsys_query.fit:
+    type: noul
+    phase: ground
+    instructions: Would `dumpsys {candidate}` actually contain the answer to the goal?
+    witness_n: 202
+    validated: true
+  dumpsys_field.pick:
+    type: choice
+    phase: ground
+    instructions: Which real field would answer the goal?
+    witness_n: 9
+    validated: true
+  dumpsys_field.fit:
+    type: noul
+    phase: ground
+    instructions: Does the field {candidate} actually answer the goal?
+    witness_n: 220
+    validated: true
+  open_app.pick:
+    type: choice
+    phase: ground
+    instructions: Which package best satisfies the goal?
+    witness_n: 413
+    validated: true
+  open_app.fit:
+    type: noul
+    phase: ground
+    instructions: Is {candidate} the app the goal asks to open?
+    witness_n: 621
+    validated: true
+  open_app.verify_satisfied:
+    type: noul
+    phase: verify
+    instructions: Is foreground_package the app named by chosen_package, or otherwise evidence that the
+      goal is now achieved for chosen_package?
+    witness_n: 23
+    validated: true
+  gate.safe.default:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command's target and effect match the chosen_action (same service/component,
+      same on-or-off direction)? Answer no if it names a different target, a different effect, or chains
+      on any additional command.
+    witness_n: 17
+    validated: true
+  kind.pick:
+    type: choice
+    phase: kind
+    instructions: Which ONE action would this goal have you perform?
+    witness_n: 0
+    validated: false
+  kind.pick_screen:
+    type: choice
+    phase: kind
+    instructions: 'Which ONE action would this goal have you perform? screen describes the real device
+      right now: screen.editable_fields lists real text fields actually on screen, screen.foreground_package
+      the app in front. A goal naming typing or searching, when a real editable field is already on screen,
+      is type_text, not open_app.'
+    witness_n: 57
+    validated: true
+  kind.any_fit:
+    type: noul
+    phase: kind
+    instructions: Given action_options, does any of them fit this goal?
+    witness_n: 57
+    validated: true
+  verify.satisfied_after_action:
+    type: noul
+    phase: verify
+    instructions: screen_after lists every real element currently on screen, each described by its own
+      real text/resource-id/content-desc. Given screen_after, is the goal now achieved?
+    witness_n: 1
+    validated: true

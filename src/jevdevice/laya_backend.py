@@ -26,6 +26,7 @@ predict(model="typed-decisions") routes to the pinned agent.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 
@@ -39,6 +40,17 @@ MODEL = "typed-decisions"
 # first verified. Calibration ties to this artifact; bumping it invalidates
 # every fitted threshold until recalibration reruns.
 REVISION = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+# A fine-tuned successor checkpoint (trained on the journal export, pushed and
+# pinned on the hub) is selected here -- a named knob, not a code edit. Every
+# decision row and ledger entry carries whichever revision actually answered,
+# so A/B against the base is a config comparison, never an archaeology dig.
+# Thresholds are calibrated per revision: switching this knob invalidates the
+# fitted thresholds until the recalibration reruns against the new artifact.
+ENV_REVISION = "JEV_LAYA_REVISION"
+
+
+def active_revision() -> str:
+    return os.environ.get(ENV_REVISION) or REVISION
 
 
 class LayaClient(JevClient):
@@ -62,10 +74,10 @@ class LayaClient(JevClient):
         # No super().__init__: no API key, no httpx client -- everything the
         # inherited ask()/aclose() would touch is overridden below.
         self._engine = "laya"  # journal rows
-        self._model = REVISION  # journal model_revision: the pinned checkpoint
+        self._model = active_revision()  # journal model_revision: the pinned checkpoint
         self._journal = journal  # None -> module-level default journal (decision_log.get_journal())
         self.usage = UsageLedger()
-        self.usage.record_engine(EngineInfo(engine="laya", model_revision=REVISION, model=MODEL))
+        self.usage.record_engine(EngineInfo(engine="laya", model_revision=self._model, model=MODEL))
         self._device = device
         self._router = router
         self._load_lock = asyncio.Lock()
@@ -88,11 +100,11 @@ class LayaClient(JevClient):
         # local HF cache every later load resolves from disk -- no network
         # round trip, no re-download check, on every process start.
         try:
-            location = snapshot_download(REPO, revision=REVISION, allow_patterns=[f"{MODEL}/*"], local_files_only=True)
+            location = snapshot_download(REPO, revision=self._model, allow_patterns=[f"{MODEL}/*"], local_files_only=True)
         except LocalEntryNotFoundError:
             # First run on this machine (or the cache was pruned): fetch the
             # pinned revision once, after which loads stay offline.
-            location = snapshot_download(REPO, revision=REVISION, allow_patterns=[f"{MODEL}/*"])
+            location = snapshot_download(REPO, revision=self._model, allow_patterns=[f"{MODEL}/*"])
         agent = Agent(location, subfolder=MODEL, device=self._device)
         router = Router()
         # attach, NOT Router(preload=[...]) -- that form loads all three
@@ -123,6 +135,13 @@ class LayaClient(JevClient):
         to the primary jev row's call_id; primary asks never set it."""
         if not questions:
             raise JevError("ask() requires at least one question")
+        # Escape-hatch detection: a runtime-generated question rides its own
+        # marker (excluded from the wire dump -- the body stays frozen), and
+        # the decision row journals its source for promotion into the next
+        # compiled question set.
+        from .question_sets import generated_source
+
+        generated = generated_source(questions)
         call_id = call_id or str(uuid.uuid4())
         scope_goal_id, scope_goal = decision_log.current_goal()
         usage_before = self.usage.snapshot()
@@ -150,7 +169,7 @@ class LayaClient(JevClient):
             # Per-ask routing evidence (Router.predict embeds its RouteDecision);
             # explicit-model routing is constant, but the row keeps the proof.
             self.usage.record_engine(EngineInfo(
-                engine="laya", model_revision=REVISION, model=MODEL, routing=payload.get("routing"),
+                engine="laya", model_revision=self._model, model=MODEL, routing=payload.get("routing"),
             ))
             if "answers" not in payload:
                 raise JevError(f"Laya response has no answers: {str(payload)[:300]}")
@@ -173,5 +192,6 @@ class LayaClient(JevClient):
                 },
                 elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
                 shadow_of=shadow_of,
+                generated=generated,
             )
         return answers

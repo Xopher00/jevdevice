@@ -10,6 +10,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 
+from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
 from .common import gated
 from .gate import (
@@ -21,7 +22,7 @@ from .gate import (
     propose_from_closed_set,
     resolve_gate,
 )
-from .jev import Choice, JevClient, Noul
+from .jev import JevClient
 from .narrowing import narrow_and_pick
 from .transport import AdbTransport
 
@@ -42,14 +43,9 @@ DND_MODES = {"off": None, "priority": None, "alarms": None, "none": None}
 
 # Not yet calibrated live (see calibrate/gate_taps.py for the batched-comparison
 # method used for TAP_SAFE_INSTRUCTIONS) -- domain-adapted from the same pattern in the meantime.
-KEYEVENT_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's key press match the chosen_action (same key)? "
-    "Answer no if it presses a different key or does anything beyond the chosen_action."
-)
-DND_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's Do Not Disturb mode match the chosen_action (same mode)? "
-    "Answer no if it sets a different mode or does anything beyond the chosen_action."
-)
+# The artifact is the single source of truth.
+KEYEVENT_SAFE_INSTRUCTIONS = question_sets.text("keyevent.safe")
+DND_SAFE_INSTRUCTIONS = question_sets.text("dnd.safe")
 
 
 def parse_dumpsys_services(raw: str) -> list[str]:
@@ -105,9 +101,9 @@ async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, 
     answers = await jev.ask(
         {"goal": goal, "radio_options": TOGGLEABLE_SERVICES},
         {
-            "service": Choice(instructions="Which service does the goal refer to?", criteria=choice_criteria(TOGGLEABLE_SERVICES, profile)),
-            "enabled": Choice(instructions="Does the goal want it turned on or off?", criteria=choice_criteria({"on": None, "off": None}, profile)),
-            "names_one": Noul(instructions="Given radio_options, does the goal specifically ask about one of them?"),
+            "service": question_sets.choice("toggle.service", choice_criteria(TOGGLEABLE_SERVICES, profile)),
+            "enabled": question_sets.choice("toggle.enabled", choice_criteria({"on": None, "off": None}, profile)),
+            "names_one": question_sets.noul("toggle.names_one"),
         },
         phase="fill",
     )
@@ -156,8 +152,8 @@ async def execute_toggle(
     services = parse_dumpsys_services(services_raw.stdout)
     resolve_verdict = await narrow_and_pick(
         jev, goal, services,
-        instructions="Which dumpsys service would show this toggled service's real status?",
-        fit_instructions="Would `dumpsys {candidate}` actually show " + service + "'s real status?",
+        instructions=question_sets.text("toggle.resolve_status.pick"),
+        fit_instructions=question_sets.text("toggle.resolve_status.fit", toggled_service=service),
         state_extra={"toggled_service": service},
     )
     if verbose:
@@ -177,7 +173,7 @@ async def execute_toggle(
     # budget -- the clip is a named knob (budget.py), never a bare int.
     verify = await jev.ask(
         {"goal": goal, "service_state": check.stdout[:current_profile(jev.engine_name).probe_max_chars]},
-        {"satisfied": Noul(instructions="Given service_state, is the goal now achieved?")},
+        {"satisfied": question_sets.noul("toggle.verify_satisfied")},
         phase="verify",
     )
     satisfied = verify["satisfied"].noul
@@ -190,8 +186,8 @@ async def propose_keyevent(jev: JevClient, goal: str, *, verbose: bool = True) -
     return await propose_from_closed_set(
         jev, goal, dict.fromkeys(KEY_EVENTS),
         options_key="key_options",
-        pick_instructions="Which key/button press would achieve this goal?",
-        any_fit_instructions="Given key_options, does any of them fit this goal?",
+        pick_instructions=question_sets.text("keyevent.pick"),
+        any_fit_instructions=question_sets.text("keyevent.any_fit"),
         pick_verb="key",
         command_for=lambda key: CommandVariant(command=f"input keyevent KEYCODE_{key}", rationale=f"press {key} per the goal"),
         label_for=lambda key: f"press {key}",
@@ -219,8 +215,8 @@ async def propose_dnd(jev: JevClient, goal: str, *, verbose: bool = True) -> Clo
     return await propose_from_closed_set(
         jev, goal, DND_MODES,
         options_key="mode_options",
-        pick_instructions="Which Do Not Disturb mode does this goal want?",
-        any_fit_instructions="Given mode_options, does any of them fit this goal?",
+        pick_instructions=question_sets.text("dnd.pick"),
+        any_fit_instructions=question_sets.text("dnd.any_fit"),
         pick_verb="DND mode",
         command_for=lambda mode: CommandVariant(command=f"cmd notification set_dnd {mode}", rationale=f"set Do Not Disturb to {mode} per the goal"),
         label_for=lambda mode: f"set Do Not Disturb to {mode}",
@@ -250,8 +246,8 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
 
     verdict = await narrow_and_pick(
         jev, goal, services,
-        instructions="Which service would answer this goal?",
-        fit_instructions="Would `dumpsys {candidate}` actually contain the answer to the goal?",
+        instructions=question_sets.text("dumpsys_query.pick"),
+        fit_instructions=question_sets.text("dumpsys_query.fit"),
         accept_any_fitting=True,
     )
     if verbose:
@@ -280,8 +276,8 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
         # dumpsys settings alone can parse to 2000+ real fields.
         field_verdict = await narrow_and_pick(
             jev, goal, list(parsed),
-            instructions="Which real field would answer the goal?",
-            fit_instructions="Does the field {candidate} actually answer the goal?",
+            instructions=question_sets.text("dumpsys_field.pick"),
+            fit_instructions=question_sets.text("dumpsys_field.fit"),
             evidence_for=_field_values,
             accept_any_fitting=True,
         )

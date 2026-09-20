@@ -13,13 +13,14 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from . import question_sets
 from .app_launch import launch_app_for_goal
 from .budget import choice_criteria, current_profile, is_abstain
 from .common import bootstrap, gated
 from .decision_log import goal_scope
 from .elements import dump_screen, screen_summary
 from .gate import CommandVariant, confirm_with_human
-from .jev import Choice, JevClient, Noul
+from .jev import JevClient
 from .services import (
     DND_MODES,
     TOGGLEABLE_SERVICES,
@@ -75,7 +76,9 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
     if verbose:
         print("--- Jev picks the action kind (real Choice over ACTION_KINDS) ---")
     state: dict = {"goal": goal, "action_options": ACTION_KINDS}
-    kind_instructions = "Which ONE action would this goal have you perform?"
+    # The screen-grounded variant is its own frozen entry
+    # (kind.pick_screen) -- nothing is composed at runtime.
+    kind_question_id = "kind.pick"
     truncation: dict = {}
     if transport is not None:
         try:
@@ -83,20 +86,15 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
             # on_screen's full label list dilutes confidence even on an unrelated
             # goal -- not worth it for kind selection.
             state["screen"] = {"foreground_package": summary["foreground_package"], "editable_fields": summary["editable_fields"]}
-            kind_instructions += (
-                " screen describes the real device right now: screen.editable_fields lists "
-                "real text fields actually on screen, screen.foreground_package the app in "
-                "front. A goal naming typing or searching, when a real editable field is "
-                "already on screen, is type_text, not open_app."
-            )
+            kind_question_id = "kind.pick_screen"
         except Exception:  # noqa: BLE001, S110 -- any dump failure just means picking the kind without screen grounding
             pass
     call_id = str(uuid.uuid4())
     answers = await jev.ask(
         state,
         {
-            "kind": Choice(instructions=kind_instructions, criteria=choice_criteria(ACTION_KINDS, current_profile(jev.engine_name))),
-            "any_fit": Noul(instructions="Given action_options, does any of them fit this goal?"),
+            "kind": question_sets.choice(kind_question_id, choice_criteria(ACTION_KINDS, current_profile(jev.engine_name))),
+            "any_fit": question_sets.noul("kind.any_fit"),
         },
         phase="kind", call_id=call_id, truncation=truncation,
     )

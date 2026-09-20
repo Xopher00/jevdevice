@@ -150,12 +150,19 @@ class JevClient:
             raise JevError("TYPESAFE_AI_API is not configured")
         if not questions:
             raise JevError("ask() requires at least one question")
+        # Escape-hatch detection: a runtime-generated question rides its
+        # own marker (excluded from the wire dump -- the body stays frozen),
+        # and the decision row journals its source so it can be promoted into
+        # the next compiled question set.
+        from .question_sets import generated_source
+
+        generated = generated_source(questions)
         call_id = call_id or str(uuid.uuid4())
         scope_goal_id, scope_goal = decision_log.current_goal()
         usage_before = self.usage.snapshot()
         started = time.perf_counter()
         wire_questions = {name: q.model_dump(mode="json", exclude_none=True) for name, q in questions.items()}
-        # Shadow observation (P5): the second engine sees the same state and the
+        # Shadow observation: the second engine sees the same state and the
         # SAME Question objects (it serializes them itself, identically), links
         # its row back via shadow_of, and its answers go nowhere.
         shadow.schedule(self, point="before_request", primary_call_id=call_id, state=state,
@@ -209,6 +216,7 @@ class JevClient:
                     "output_tokens": usage_after.output_tokens - usage_before.output_tokens,
                 },
                 elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                generated=generated,
             )
             # after-mode shadowing: only now, once the primary answer and row are
             # final, does the second engine see the call (zero contention with it).
@@ -222,6 +230,7 @@ class JevClient:
         questions: dict, answers: dict[str, Answer] | None, error: str | None,
         truncation: dict | None, goal_id: str | None, goal: str | None, usage_delta: dict,
         elapsed_ms: float | None = None, shadow_of: str | None = None,
+        generated: str | None = None,
     ) -> None:
         """Journal emission, fail-open: a journal failure must never break a live
         decision (DecisionJournal.record_* swallows and prints)."""
@@ -233,5 +242,5 @@ class JevClient:
             phase=phase, state=state, questions=questions,
             answers={name: answer.model_dump(mode="json") for name, answer in answers.items()} if answers else None,
             error=error, truncation=truncation, goal_id=goal_id, goal=goal, usage=usage_delta,
-            elapsed_ms=elapsed_ms, shadow_of=shadow_of,
+            elapsed_ms=elapsed_ms, shadow_of=shadow_of, generated=generated,
         )

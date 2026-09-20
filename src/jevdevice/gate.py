@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
+from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
 from .jev import Choice, JevClient, Noul
 from .matching import confidence_gate
@@ -98,11 +99,8 @@ def is_denied(command: str) -> bool:
 
 
 # calibrate/gate.py-verified: 0.82-0.94 for correct commands, 0.05 for a wrong target.
-DEFAULT_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's target and effect match the chosen_action "
-    "(same service/component, same on-or-off direction)? Answer no if it names a "
-    "different target, a different effect, or chains on any additional command."
-)
+# The artifact is the single source of truth.
+DEFAULT_SAFE_INSTRUCTIONS = question_sets.text("gate.safe.default")
 
 
 @dataclass

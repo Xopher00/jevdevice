@@ -30,8 +30,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 
+from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
-from .jev import Answer, Choice, JevClient, Noul
+from .jev import Answer, Choice, JevClient, Question
 from .matching import (
     NarrowVerdict,
     chunk_candidates,
@@ -48,10 +49,17 @@ def _as_criteria(items: list[str]) -> dict[str, None]:
     return {item: None for item in items}
 
 
-def fit_questions(shortlist: Sequence[str], fit_instructions: str, describe: Callable[[str], str] = lambda c: c) -> dict[str, Noul]:
+def fit_questions(
+    shortlist: Sequence[str], fit_instructions: str, describe: Callable[[str], str] = lambda c: c,
+    *, generated_source: str | None = None,
+) -> dict[str, Question]:
     """One "does this candidate really fit" Noul per shortlist entry, keyed fit_0..n in
-    shortlist order -- shared by narrow_and_pick and ui.py's fused pick+gate asks."""
-    return {f"fit_{i}": Noul(instructions=fit_instructions.format(candidate=describe(c))) for i, c in enumerate(shortlist)}
+    shortlist order -- shared by narrow_and_pick and ui.py's fused pick+gate asks.
+    generated_source != None marks the family as an ESCAPE-HATCH generation (a
+    caller supplied wording outside the frozen question set) -- journaled, promotable."""
+    return question_sets.fit_questions_from(
+        fit_instructions, shortlist, describe, generated_source=generated_source,
+    )
 
 
 def extract_fits(answers: dict[str, Answer], shortlist: Sequence[str]) -> dict[str, float]:
@@ -80,7 +88,7 @@ async def _score_chunk(
     profile = current_profile(jev.engine_name)
     state = {"goal": query, "candidates": chunk, **(state_extra or {})}
     answers = await jev.ask(state, {
-        "any": Noul(instructions="Could any of these candidates satisfy the goal?"),
+        "any": question_sets.noul("recall.any"),
         "pick": Choice(instructions=instructions, criteria=choice_criteria(_as_criteria(chunk), profile)),
     }, phase="recall")
     probabilities = {
@@ -126,7 +134,7 @@ async def _pick_and_decide(
     evidence_for: Callable[[list[str]], Awaitable[dict[str, str]]] | None,
     state_extra: dict | None, describe: Callable[[str], str],
     enumerated: Sequence[str], min_fit: float, min_confidence: float, min_margin: float,
-    accept_any_fitting: bool,
+    accept_any_fitting: bool, fit_generated_source: str | None = None,
 ) -> NarrowVerdict:
     """Round 2 shared by every path (direct, retrieval shortlist, chunked sweep):
     one Choice over the shortlist plus a fit Noul per entry, then decide()."""
@@ -144,7 +152,7 @@ async def _pick_and_decide(
     state = {"goal": query, "candidates": criteria, **(state_extra or {})}
     answers = await jev.ask(state, {
         "pick": Choice(instructions=instructions, criteria=choice_criteria(criteria, profile)),
-        **fit_questions(shortlist, fit_instructions, describe),
+        **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source),
     }, phase="ground")
     pick = answers["pick"]
     fits = extract_fits(answers, shortlist)
@@ -159,7 +167,7 @@ async def narrow_and_pick(
     chunk_size: int | None = None, k: int | None = None, min_fit: float | None = None,
     min_confidence: float | None = None,
     min_margin: float | None = None, state_extra: dict | None = None, accept_any_fitting: bool = False,
-    describe: Callable[[str], str] = lambda c: c,
+    describe: Callable[[str], str] = lambda c: c, fit_generated_source: str | None = None,
 ) -> NarrowVerdict:
     """Rounds 1+2+decide: the one function real call sites use.
 
@@ -191,6 +199,7 @@ async def narrow_and_pick(
                 evidence_for=evidence_for, state_extra=state_extra, describe=describe,
                 enumerated=candidates, min_fit=min_fit, min_confidence=min_confidence,
                 min_margin=min_margin, accept_any_fitting=accept_any_fitting,
+                fit_generated_source=fit_generated_source,
             )
             if verdict.ok:
                 return verdict
@@ -207,4 +216,5 @@ async def narrow_and_pick(
         evidence_for=evidence_for, state_extra=state_extra, describe=describe,
         enumerated=candidates, min_fit=min_fit, min_confidence=min_confidence,
         min_margin=min_margin, accept_any_fitting=accept_any_fitting,
+        fit_generated_source=fit_generated_source,
     )

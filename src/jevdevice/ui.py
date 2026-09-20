@@ -13,6 +13,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
 from .elements import (
     Element,
@@ -41,19 +42,12 @@ from .narrowing import _abstain_verdict, extract_fits, fit_questions, narrow_and
 from .services import execute_command
 from .transport import AdbTransport
 
-TAP_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's target and effect match the chosen_action "
-    "(same on-screen element, same tap location -- check target_bounds against the coordinates "
-    "in proposed_command)? Answer no if it targets a different element, produces a different "
-    "effect, or does anything beyond the chosen_action."
-)
+# These module constants are SOURCED from the
+# versioned artifact (question_sets/v1.yaml) so calibrate/ CLIs and tests that
+# import them keep working -- the artifact is the single source of truth.
+TAP_SAFE_INSTRUCTIONS = question_sets.text("tap.safe")
 
-TYPE_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's target field and typed value match the chosen_action "
-    "(same on-screen field -- check target_bounds against the tap coordinates -- and the same "
-    "value)? Answer no if it targets a different field, types a different value, or does anything "
-    "beyond the chosen_action."
-)
+TYPE_SAFE_INSTRUCTIONS = question_sets.text("type.safe")
 
 
 class _LRUCache(OrderedDict):
@@ -109,13 +103,15 @@ class TapProposal:
 
 async def _fused_pick_and_gate(
     jev: JevClient, goal: str, options: dict[str, Element], *,
-    pick_instructions: str, fit_instructions: str, safe_instructions: str,
-    command_for, chosen_label_for,
+    pick_instructions: str, fit_instructions: str, safe_fused_id: str, safe_instructions: str,
+    command_for, chosen_label_for, fit_generated_source: str | None = None,
 ) -> tuple[NarrowVerdict, GateResult | None]:
     """Narrow + gate in one batched ask instead of two sequential round trips: a per-candidate
     safety Noul (TypeSafe's speculative-fan-out pattern) is asked alongside the pick, using each
     candidate's own real bounds/command, so the winner's gate answer is already in hand. Shared by
-    tap and long_press -- only the command/label shape differs between them.
+    tap and long_press -- only the command/label shape differs between them. The per-candidate
+    safety wording is the frozen fused template (safe_fused_id, e.g. tap.safe_fused); the plain
+    safe_instructions ride along for the non-fused gate fallback below.
 
     `options` is the option map the judge answers over (short raw labels on profiles with
     short_labels, full labels otherwise); option keys double as the dict keys for the
@@ -129,11 +125,13 @@ async def _fused_pick_and_gate(
     safe_keys = {f"safe_{i}": c for i, c in enumerate(options)}
     questions = {
         "pick": Choice(instructions=pick_instructions, criteria=choice_criteria(criteria, profile)),
-        **fit_questions(options, fit_instructions, lambda c: options[c].description or c),
+        **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source),
         **{
-            key: Noul(instructions=(
-                f"chosen_action={chosen_label_for(c)!r}. proposed_command={command_for(options[c])!r}. "
-                f"target_bounds={options[c].bounds!r}. {safe_instructions}"
+            key: Noul(instructions=question_sets.text(
+                safe_fused_id,
+                chosen_action=chosen_label_for(c),
+                proposed_command=command_for(options[c]),
+                target_bounds=options[c].bounds,
             ))
             for key, c in safe_keys.items()
         },
@@ -174,11 +172,15 @@ async def _cached_or_narrow(
 
 async def _propose_gesture(
     jev: JevClient, transport: AdbTransport, goal: str, *,
-    parse_elements, pick_instructions: str, fit_instructions: str, safe_instructions: str,
-    command_for, chosen_label_for, verbose: bool = True,
+    parse_elements, pick_instructions: str, fit_instructions: str, safe_fused_id: str,
+    safe_question_id: str, command_for, chosen_label_for, verbose: bool = True,
+    fit_generated_source: str | None = None,
 ) -> TapProposal:
     """Shared by tap and long_press: narrow real matching elements + gate the resulting
-    gesture. Only the element filter and command/label shape differ between callers."""
+    gesture. Only the element filter and command/label shape differ between callers.
+    safe_fused_id/safe_question_id are frozen question-set ids (tap vs long_press).
+    fit_generated_source != None marks the fit family as an escape-hatch generation."""
+    safe_instructions = question_sets.text(safe_question_id)
     dump_xml = await dump_screen(transport)
     elements = parse_elements(dump_xml)
     if verbose:
@@ -199,12 +201,14 @@ async def _propose_gesture(
             verdict, gate_result = await _fused_pick_and_gate(
                 jev, goal, options,
                 pick_instructions=pick_instructions, fit_instructions=fit_instructions,
-                safe_instructions=safe_instructions, command_for=command_for, chosen_label_for=chosen_label_for,
+                safe_fused_id=safe_fused_id, safe_instructions=safe_instructions,
+                command_for=command_for, chosen_label_for=chosen_label_for,
+                fit_generated_source=fit_generated_source,
             )
             if verbose:
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
         else:
-            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c)
+            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c, fit_generated_source=fit_generated_source)
             if verbose:
                 print(f"shortlist: {verdict.shortlist}")
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
@@ -224,7 +228,7 @@ async def _propose_gesture(
         gate_result = await gate_command(
             jev, command, chosen_label=chosen_label,
             evidence={"target_element": verdict.choice, "target_bounds": target.bounds},
-            instructions=safe_instructions,
+            instructions=question_sets.text(safe_question_id),
         )
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
@@ -234,45 +238,45 @@ async def _propose_gesture(
 
 async def propose_tap(
     jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
-    fit_instructions: str = "Would tapping {candidate} actually perform the goal?",
+    fit_instructions: str | None = None,
 ) -> TapProposal:
-    """Narrow real on-screen elements + gate the resulting tap. No execution. `fit_instructions`
-    defaults to a single-step framing ("actually perform the goal") -- a multi-step caller (see
-    experiment/action_chain.py) can override it to ask about progress instead, since no single
-    tap performs a whole multi-clause goal (the default wording scores a correctly-labeled real
-    button low when the goal describes several remaining steps)."""
+    """Narrow real on-screen elements + gate the resulting tap. No execution. The fit wording
+    comes from the frozen question set (tap.fit). A multi-step caller (see
+    experiment/action_chain.py) can override it to ask about progress instead -- an override is
+    a RUNTIME-GENERATED question (the escalation escape hatch): it is journaled with
+    generated=<source> and is eligible for promotion into the next compiled question set."""
     return await _propose_gesture(
         jev, transport, goal,
         parse_elements=parse_actionable_elements,
-        pick_instructions="Which on-screen element would perform this goal?",
-        fit_instructions=fit_instructions,
-        safe_instructions=TAP_SAFE_INSTRUCTIONS,
+        pick_instructions=question_sets.text("tap.pick"),
+        fit_instructions=fit_instructions or question_sets.text("tap.fit"),
+        fit_generated_source=None if fit_instructions is None else "propose_tap.fit_instructions_override",
+        safe_fused_id="tap.safe_fused",
+        safe_question_id="tap.safe",
         command_for=lambda el: f"input tap {el.x} {el.y}",
         chosen_label_for=lambda c: f"tap {c}",
         verbose=verbose,
     )
 
 
-LONG_PRESS_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's target match the chosen_action (same on-screen element, same "
-    "location -- check target_bounds against the coordinates in proposed_command)? Answer no if "
-    "it targets a different element or does anything beyond the chosen_action."
-)
+LONG_PRESS_SAFE_INSTRUCTIONS = question_sets.text("long_press.safe")
 
 
 async def propose_long_press(
     jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
-    fit_instructions: str = "Would long-pressing {candidate} actually perform the goal?",
+    fit_instructions: str | None = None,
 ) -> TapProposal:
     """Narrow real long-clickable elements + gate the resulting long-press. No execution --
-    execute_tap runs it (a long-press is just `input swipe` with start==end). `fit_instructions`
-    default is single-step framing; see propose_tap for why a multi-step caller overrides it."""
+    execute_tap runs it (a long-press is just `input swipe` with start==end). Same escape-hatch
+    rule as propose_tap: an explicit fit_instructions override is runtime-generated and journaled."""
     return await _propose_gesture(
         jev, transport, goal,
         parse_elements=parse_long_clickable_elements,
-        pick_instructions="Which on-screen element would this goal want long-pressed?",
-        fit_instructions=fit_instructions,
-        safe_instructions=LONG_PRESS_SAFE_INSTRUCTIONS,
+        pick_instructions=question_sets.text("long_press.pick"),
+        fit_instructions=fit_instructions or question_sets.text("long_press.fit"),
+        fit_generated_source=None if fit_instructions is None else "propose_long_press.fit_instructions_override",
+        safe_fused_id="long_press.safe_fused",
+        safe_question_id="long_press.safe",
         command_for=lambda el: f"input swipe {el.x} {el.y} {el.x} {el.y} 800",
         chosen_label_for=lambda c: f"long-press {c}",
         verbose=verbose,
@@ -283,10 +287,7 @@ async def propose_long_press(
 # a genuinely fixed small set, not an app-specific menu of hardcoded options.
 DIRECTIONS = {"up": None, "down": None, "left": None, "right": None}
 
-SWIPE_SAFE_INSTRUCTIONS = (
-    "Does the proposed_command's swipe direction match the chosen_action (same direction)? "
-    "Answer no if it swipes a different direction or does anything beyond the chosen_action."
-)
+SWIPE_SAFE_INSTRUCTIONS = question_sets.text("swipe.safe")
 
 
 async def propose_swipe(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
@@ -310,11 +311,8 @@ async def propose_swipe(jev: JevClient, transport: AdbTransport, goal: str, *, v
     return await propose_from_closed_set(
         jev, goal, DIRECTIONS,
         options_key="direction_options",
-        pick_instructions=(
-            "Which swipe direction does this goal want? 'scroll down'/'see more below' -> "
-            "down; 'scroll up'/'go back up' -> up; likewise left/right for horizontal content."
-        ),
-        any_fit_instructions="Given direction_options, does any of them fit this goal?",
+        pick_instructions=question_sets.text("swipe.pick"),
+        any_fit_instructions=question_sets.text("swipe.any_fit"),
         pick_verb="direction",
         command_for=command_for,
         label_for=lambda d: f"swipe {d}",
@@ -342,8 +340,8 @@ async def scroll_to_find(
         options = short_options(elements) if current_profile(jev.engine_name).short_labels else elements
         verdict = await narrow_and_pick(
             jev, goal, list(options),
-            instructions="Which real on-screen item is the target this goal is scrolling to find?",
-            fit_instructions="Is {candidate} really the target this goal describes?",
+            instructions=question_sets.text("scroll_to_find.pick"),
+            fit_instructions=question_sets.text("scroll_to_find.fit"),
             describe=lambda c, options=options: options[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
         )
         if verbose:
@@ -375,10 +373,7 @@ async def _verify_after_action(
         screen_after = describe_screen(await dump_screen(transport), goal=goal, limit=current_profile(jev.engine_name).screen_limit, telemetry=truncation)
         answers = await jev.ask(
             {"goal": goal, "acted_on": acted_on, "screen_after": screen_after},
-            {"satisfied": Noul(instructions="screen_after lists every real element currently on "
-                                             "screen, each described by its own real text/"
-                                             "resource-id/content-desc. Given screen_after, is "
-                                             "the goal now achieved?")},
+            {"satisfied": question_sets.noul("verify.satisfied_after_action")},
             phase="verify", truncation=truncation,
         )
         satisfied = answers["satisfied"].noul
@@ -448,8 +443,8 @@ async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | Non
     return await jev.ask(
         {"goal": goal, "candidate_values": spans},
         {
-            "value": Choice(instructions="Which of these is the text to type for this goal?", criteria=choice_criteria({s: None for s in spans}, profile)),
-            "any_fit": Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?"),
+            "value": question_sets.choice("type_value.pick", choice_criteria({s: None for s in spans}, profile)),
+            "any_fit": question_sets.noul("type_value.any_fit"),
         },
         phase="fill",
     )
@@ -457,6 +452,7 @@ async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | Non
 
 async def _fused_field_and_value(
     jev: JevClient, goal: str, options: dict[str, Element], spans: list[str], fit_instructions: str,
+    *, fit_generated_source: str | None = None,
 ) -> tuple[NarrowVerdict, dict | None]:
     """Batches field-narrow with value-pick into one real request on a cache miss -- they're
     independent facts that previously cost two separate round trips (asyncio.gather only
@@ -469,13 +465,13 @@ async def _fused_field_and_value(
         field_criteria = {c: None for c in options}
     state = {"goal": goal, "candidates": field_criteria}
     questions = {
-        "pick": Choice(instructions="Which on-screen field should receive text for this goal?", criteria=choice_criteria(field_criteria, profile)),
-        **fit_questions(options, fit_instructions, lambda c: options[c].description or c),
+        "pick": question_sets.choice("type_field.pick", choice_criteria(field_criteria, profile)),
+        **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source),
     }
     if spans:
         state["candidate_values"] = spans
-        questions["value"] = Choice(instructions="Which of these is the text to type for this goal?", criteria=choice_criteria({s: None for s in spans}, profile))
-        questions["any_fit_value"] = Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?")
+        questions["value"] = question_sets.choice("type_value.pick", choice_criteria({s: None for s in spans}, profile))
+        questions["any_fit_value"] = question_sets.noul("type_value.any_fit")
     answers = await jev.ask(state, questions, phase="fill")
     pick = answers["pick"]
     fits = extract_fits(answers, options)
@@ -492,11 +488,11 @@ async def _fused_field_and_value(
 
 async def propose_type(
     jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
-    fit_instructions: str = "Would typing into {candidate} actually serve the goal?",
+    fit_instructions: str | None = None,
 ) -> TypeProposal:
     """Narrow real editable fields + extract/pick the real value to type + gate. No execution.
-    `fit_instructions` default is single-step framing; see propose_tap for why a multi-step
-    caller overrides it."""
+    The fit wording comes from the frozen question set (type_field.fit). An explicit override
+    is the escalation escape hatch: runtime-generated and journaled (see propose_tap)."""
     dump_xml = await dump_screen(transport)
     elements = parse_editable_elements(dump_xml)
     if verbose:
@@ -515,7 +511,11 @@ async def propose_type(
         field_verdict = NarrowVerdict(cached, 1.0, 1.0, 1.0, [cached])
         answers = await _pick_value(jev, goal, spans)
     else:
-        field_verdict, answers = await _fused_field_and_value(jev, goal, options, spans, fit_instructions)
+        field_verdict, answers = await _fused_field_and_value(
+            jev, goal, options, spans,
+            fit_instructions or question_sets.text("type_field.fit"),
+            fit_generated_source=None if fit_instructions is None else "propose_type.fit_instructions_override",
+        )
         if field_verdict.ok:
             _ELEMENT_CACHE[cache_key] = field_verdict.choice
     if verbose:

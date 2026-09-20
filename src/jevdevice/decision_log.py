@@ -185,14 +185,18 @@ class DecisionJournal:
         state=None, questions=None, answers=None, truncation=None, usage=None, error=None,
         goal: str | None = None, goal_id: str | None = None,
         elapsed_ms: float | None = None, shadow_of: str | None = None,
+        generated: str | None = None,
     ) -> None:
         """One row per ask(): the full replayable decision. `answers` is the FULL
         distribution (probabilities/confidence/noul), not just the winning pick;
         on failure `answers` is None and `error` carries the message.
-        elapsed_ms (P5): this ask()'s wall time. shadow_of (P5): set only on
+        elapsed_ms: this ask()'s wall time. shadow_of: set only on
         shadow rows -- the primary row's call_id this observation shadows; a
-        None value means the row IS a primary decision (P4.5/analyses key off
-        this, so a shadow row can never be mistaken for a real one)."""
+        None value means the row IS a primary decision (analytics key off
+        this, so a shadow row can never be mistaken for a real one).
+        generated: escape-hatch provenance -- the source of a runtime-
+        generated question (e.g. "propose_tap.fit_instructions_override");
+        None means every question came from the frozen question set."""
         if not self.enabled:
             return
         row = {
@@ -212,6 +216,7 @@ class DecisionJournal:
             "error": error,
             "elapsed_ms": elapsed_ms,
             "shadow_of": shadow_of,
+            "generated": generated,
         }
         try:
             self._append({key: self._blobify(value) for key, value in row.items()})
@@ -258,7 +263,7 @@ class DecisionJournal:
         self, *, event: str, engine: str | None = None, provenance: dict | None = None,
         result: dict | None = None,
     ) -> None:
-        """One row per continuous-calibration loop run (P4.5): the proposed
+        """One row per continuous-calibration loop run: the proposed
         fits (or the documented non-proposal), the shadow-run verdicts under
         current vs proposed thresholds, and the window provenance. Additive
         row type -- replay() yields it like any other row."""
