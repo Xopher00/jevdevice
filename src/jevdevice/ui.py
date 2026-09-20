@@ -23,16 +23,19 @@ from .elements import (
     parse_long_clickable_elements,
 )
 from .gate import (
+    ClosedSetProposal,
     CommandVariant,
     GateResult,
     Pending,
     finalize_gate,
     gate_command,
+    propose_from_closed_set,
     resolve_gate,
 )
 from .jev import Choice, JevClient, Noul
-from .matching import NarrowVerdict, confidence_gate, decide, extract_value_spans, fuzzy_narrow
-from .narrowing import CHUNK_SIZE, narrow_and_pick
+from .matching import NarrowVerdict, decide, extract_value_spans, fuzzy_narrow
+from .narrowing import CHUNK_SIZE, extract_fits, fit_questions, narrow_and_pick
+from .services import execute_command
 from .transport import AdbTransport
 
 TAP_SAFE_INSTRUCTIONS = (
@@ -111,11 +114,10 @@ async def _fused_pick_and_gate(
     tap and long_press -- only the command/label shape differs between them."""
     labels = list(elements)
     criteria = {c: None for c in labels}
-    fit_keys = {f"fit_{i}": c for i, c in enumerate(labels)}
     safe_keys = {f"safe_{i}": c for i, c in enumerate(labels)}
     questions = {
         "pick": Choice(instructions=pick_instructions, criteria=criteria),
-        **{key: Noul(instructions=fit_instructions.format(candidate=elements[c].description or c)) for key, c in fit_keys.items()},
+        **fit_questions(labels, fit_instructions, lambda c: elements[c].description or c),
         **{
             key: Noul(instructions=(
                 f"chosen_action={chosen_label_for(c)!r}. proposed_command={command_for(elements[c])!r}. "
@@ -126,7 +128,7 @@ async def _fused_pick_and_gate(
     }
     answers = await jev.ask({"goal": goal, "candidates": criteria}, questions)
     pick = answers["pick"]
-    fits = {c: answers[key].noul for key, c in fit_keys.items()}
+    fits = extract_fits(answers, labels)
     verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, labels)
     if not verdict.ok:
         return verdict, None
@@ -263,39 +265,9 @@ SWIPE_SAFE_INSTRUCTIONS = (
 )
 
 
-@dataclass
-class SwipeProposal:
-    direction: str | None
-    confidence: float
-    ready: CommandVariant | None = None
-    pending: Pending | None = None
-    reasons: tuple[str, ...] = ()
-
-
-async def propose_swipe(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> SwipeProposal:
+async def propose_swipe(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
     """Pick one of the four real swipe directions for the goal + gate it. No execution."""
     width, height = await transport.window_size()
-
-    answers = await jev.ask(
-        {"goal": goal, "direction_options": DIRECTIONS},
-        {
-            "direction": Choice(instructions=(
-                "Which swipe direction does this goal want? 'scroll down'/'see more below' -> "
-                "down; 'scroll up'/'go back up' -> up; likewise left/right for horizontal content."
-            ), criteria=DIRECTIONS),
-            "any_fit": Noul(instructions="Given direction_options, does any of them fit this goal?"),
-        },
-    )
-    pick = answers["direction"]
-    if verbose:
-        print(f"picked direction: {pick.choice} (confidence {pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})")
-    if answers["any_fit"].noul < 0.5:
-        return SwipeProposal(None, pick.confidence, reasons=(f"none of the {len(DIRECTIONS)} directions fit this goal",))
-    ok, reason = confidence_gate(pick.probabilities, pick.confidence)
-    if not ok:
-        return SwipeProposal(None, pick.confidence, reasons=(reason,))
-    direction = pick.choice
-
     cx, cy = width // 2, height // 2
     dx, dy = int(width * 0.3), int(height * 0.3)
     # A "down" scroll (reveal content further down) is a physical swipe upward: finger starts
@@ -306,19 +278,25 @@ async def propose_swipe(jev: JevClient, transport: AdbTransport, goal: str, *, v
         "left": ((cx + dx, cy), (cx - dx, cy)),
         "right": ((cx - dx, cy), (cx + dx, cy)),
     }
-    (x1, y1), (x2, y2) = endpoints[direction]
-    command = CommandVariant(command=f"input swipe {x1} {y1} {x2} {y2} 300", rationale=f"swipe {direction} per the goal")
-    chosen_label = f"swipe {direction}"
-    gate_result = await gate_command(jev, command, chosen_label=chosen_label, instructions=SWIPE_SAFE_INSTRUCTIONS)
-    if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
-    ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return SwipeProposal(direction, pick.confidence, ready, pending, reasons)
 
+    def command_for(direction: str) -> CommandVariant:
+        (x1, y1), (x2, y2) = endpoints[direction]
+        return CommandVariant(command=f"input swipe {x1} {y1} {x2} {y2} 300", rationale=f"swipe {direction} per the goal")
 
-async def execute_swipe(transport: AdbTransport, command: CommandVariant) -> int:
-    result = await transport.run(command.command)
-    return result.exit_code
+    return await propose_from_closed_set(
+        jev, goal, DIRECTIONS,
+        options_key="direction_options",
+        pick_instructions=(
+            "Which swipe direction does this goal want? 'scroll down'/'see more below' -> "
+            "down; 'scroll up'/'go back up' -> up; likewise left/right for horizontal content."
+        ),
+        any_fit_instructions="Given direction_options, does any of them fit this goal?",
+        pick_verb="direction",
+        command_for=command_for,
+        label_for=lambda d: f"swipe {d}",
+        gate_instructions=SWIPE_SAFE_INSTRUCTIONS,
+        verbose=verbose,
+    )
 
 
 @dataclass
@@ -349,10 +327,11 @@ async def scroll_to_find(
             return ScrollToFindOutcome(verdict.choice, attempt)
 
         proposal = await propose_swipe(jev, transport, f"scroll {direction}", verbose=False)
-        command = proposal.ready or (proposal.pending.command if proposal.pending else None)
-        if command is None:
-            return ScrollToFindOutcome(None, attempt, reasons=("swipe gate did not approve", *proposal.reasons))
-        await execute_swipe(transport, command)
+        # Only proposal.ready runs here -- a needs_approval verdict stops the loop like
+        # any other unapproved command, it is never executed implicitly.
+        if proposal.ready is None:
+            return ScrollToFindOutcome(None, attempt, reasons=("swipe gate did not approve scrolling", *proposal.reasons))
+        await execute_command(transport, proposal.ready)
     return ScrollToFindOutcome(None, max_attempts, reasons=(f"not found after {max_attempts} scrolls",))
 
 
@@ -454,11 +433,10 @@ async def _fused_field_and_value(
     overlaps wall-clock time, it doesn't merge the payloads)."""
     labels = list(elements)
     field_criteria = {c: None for c in labels}
-    fit_keys = {f"fit_{i}": c for i, c in enumerate(labels)}
     state = {"goal": goal, "candidates": field_criteria}
     questions = {
         "pick": Choice(instructions="Which on-screen field should receive text for this goal?", criteria=field_criteria),
-        **{key: Noul(instructions=fit_instructions.format(candidate=elements[c].description or c)) for key, c in fit_keys.items()},
+        **fit_questions(labels, fit_instructions, lambda c: elements[c].description or c),
     }
     if spans:
         state["candidate_values"] = spans
@@ -466,7 +444,7 @@ async def _fused_field_and_value(
         questions["any_fit_value"] = Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?")
     answers = await jev.ask(state, questions)
     pick = answers["pick"]
-    fits = {c: answers[key].noul for key, c in fit_keys.items()}
+    fits = extract_fits(answers, labels)
     # A field's label embeds its live text, so it reads as a new candidate once typed into --
     # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
     loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(elements) <= 3 else {}

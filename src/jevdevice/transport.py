@@ -24,6 +24,31 @@ class RunResult:
         return self.exit_code == 0
 
 
+async def _communicate_or_kill(
+    process: asyncio.subprocess.Process, timeout: float,
+) -> tuple[bytes, bytes, int]:
+    """Wait for a spawned process, or kill it (and reap it) on timeout -- an unreaped
+    kill leaves a zombie, and a leaked adb process holds the device connection open."""
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        return b"", b"timed out", 124  # exit code 124, like timeout(1)
+    return stdout, stderr, process.returncode or 0
+
+
+async def _finish(process: asyncio.subprocess.Process, timeout: float) -> RunResult:
+    """Shared tail of AdbTransport.run / LocalShellTransport.run -- they differ only in
+    how the process is spawned."""
+    stdout, stderr, exit_code = await _communicate_or_kill(process, timeout)
+    return RunResult(
+        stdout=stdout.decode(errors="replace"),
+        stderr=stderr.decode(errors="replace"),
+        exit_code=exit_code,
+    )
+
+
 class Transport(Protocol):
     async def describe(self) -> str:
         """A short device fingerprint, e.g. 'Android 14, Samsung SM-S921B'."""
@@ -64,12 +89,7 @@ class AdbTransport:
             self._adb, "-s", self.serial, "shell", command,
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except TimeoutError:
-            process.kill()
-            return RunResult(stdout="", stderr="timed out", exit_code=124)
-        return RunResult(stdout=stdout.decode(errors="replace"), stderr=stderr.decode(errors="replace"), exit_code=process.returncode or 0)
+        return await _finish(process, timeout)
 
     async def run_binary(self, command: str, timeout: float = 15.0) -> bytes:
         """`exec-out` streams raw stdout bytes -- for commands like `screencap -p`
@@ -78,7 +98,9 @@ class AdbTransport:
             self._adb, "-s", self.serial, "exec-out", command,
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        stdout, stderr, exit_code = await _communicate_or_kill(process, timeout)
+        if exit_code != 0:
+            raise RuntimeError(f"{command!r} failed (exit {exit_code}): {stderr.decode(errors='replace')[:200]}")
         return stdout
 
 
@@ -90,9 +112,4 @@ class LocalShellTransport:
         process = await asyncio.create_subprocess_shell(
             command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except TimeoutError:
-            process.kill()
-            return RunResult(stdout="", stderr="timed out", exit_code=124)
-        return RunResult(stdout=stdout.decode(errors="replace"), stderr=stderr.decode(errors="replace"), exit_code=process.returncode or 0)
+        return await _finish(process, timeout)

@@ -217,11 +217,14 @@ async def device_do(
     kind = kind_pick.kind
     if kind is None:
         return await _with_screenshot({"status": "escalated", "reasons": list(kind_pick.reasons)}, include=include_screenshot)
+    # A goal that IS a screenshot returns the image even with include_screenshot=False --
+    # otherwise device_do(goal="take a screenshot") would answer {"status": "ok"} and nothing else.
+    include = include_screenshot or kind == "screenshot"
     if kind in KIND_TABLE:
         response = await _do_gated(kind, goal, verify=verify, auto_approve=auto_approve)
     else:
         response = await _UNGATED_DISPATCH[kind](goal, verify=verify, auto_approve=auto_approve, direction=direction, max_attempts=max_attempts)
-    return await _with_screenshot(response, include=include_screenshot)
+    return await _with_screenshot(response, include=include)
 
 
 @mcp.tool()

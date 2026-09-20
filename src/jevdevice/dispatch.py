@@ -20,8 +20,7 @@ from .jev import Choice, JevClient, Noul
 from .services import (
     DND_MODES,
     TOGGLEABLE_SERVICES,
-    execute_dnd,
-    execute_keyevent,
+    execute_command,
     execute_toggle,
     propose_dnd,
     propose_keyevent,
@@ -31,7 +30,6 @@ from .services import (
 )
 from .transport import AdbTransport
 from .ui import (
-    execute_swipe,
     execute_tap,
     execute_type,
     propose_long_press,
@@ -139,17 +137,17 @@ KIND_TABLE: dict[str, KindHandler] = {
     ),
     "keyevent": KindHandler(
         propose=lambda jev, transport, goal: propose_keyevent(jev, goal, verbose=False),
-        execute=lambda jev, transport, goal, proposal, command, **kw: execute_keyevent(transport, command),
+        execute=lambda jev, transport, goal, proposal, command, **kw: execute_command(transport, command),
         resume_arg=lambda proposal: None,
     ),
     "swipe": KindHandler(
         propose=lambda jev, transport, goal: propose_swipe(jev, transport, goal, verbose=False),
-        execute=lambda jev, transport, goal, proposal, command, **kw: execute_swipe(transport, command),
+        execute=lambda jev, transport, goal, proposal, command, **kw: execute_command(transport, command),
         resume_arg=lambda proposal: None,
     ),
     "set_dnd": KindHandler(
         propose=lambda jev, transport, goal: propose_dnd(jev, goal, verbose=False),
-        execute=lambda jev, transport, goal, proposal, command, **kw: execute_dnd(transport, command),
+        execute=lambda jev, transport, goal, proposal, command, **kw: execute_command(transport, command),
         resume_arg=lambda proposal: None,
     ),
 }

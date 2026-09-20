@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
-from .jev import JevClient, Noul
+from .jev import Choice, JevClient, Noul
+from .matching import confidence_gate
 
 # Real argv shapes classified as read-only, by (argv[0], rest-of-argv-prefix-or-None).
 # None means "any args" -- e.g. dumpsys is read-only regardless of which service.
@@ -182,3 +184,49 @@ def finalize_gate(command: CommandVariant, confidence: float, threshold: float =
     if confidence >= threshold:
         return GateResult(verdict=GateVerdict.APPROVED, reason="jev_confirmed", noul_confidence=confidence)
     return GateResult(verdict=GateVerdict.NEEDS_APPROVAL, reason="jev_uncertain", noul_confidence=confidence)
+
+
+@dataclass
+class ClosedSetProposal:
+    """Result of a Jev Choice over one fixed small option set (a key, a DND mode, a swipe
+    direction) plus that pick's gate, before any mutation runs. toggle_service makes two
+    picks (service + on/off) and keeps its own proposal type."""
+    pick: str | None
+    confidence: float
+    ready: CommandVariant | None = None
+    pending: Pending | None = None
+    reasons: tuple[str, ...] = ()
+
+
+async def propose_from_closed_set(
+    jev: JevClient, goal: str, options: dict[str, str | None], *,
+    options_key: str, pick_instructions: str, any_fit_instructions: str,
+    command_for: Callable[[str], CommandVariant], label_for: Callable[[str], str],
+    gate_instructions: str, verbose: bool = True, pick_verb: str = "pick",
+) -> ClosedSetProposal:
+    """Shared propose pipeline for closed-set actions (keyevent, DND, swipe): one batched
+    ask -- which option fits, and does any of them fit -- then the deterministic command
+    built from the winning option goes through gate_command. Never executes; returns
+    reasons when nothing fits or the pick fails the confidence gate."""
+    answers = await jev.ask(
+        {"goal": goal, options_key: options},
+        {
+            "pick": Choice(instructions=pick_instructions, criteria=options),
+            "any_fit": Noul(instructions=any_fit_instructions),
+        },
+    )
+    pick_answer = answers["pick"]
+    if verbose:
+        print(f"picked {pick_verb}: {pick_answer.choice} (confidence {pick_answer.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})")
+    if answers["any_fit"].noul < 0.5:
+        return ClosedSetProposal(None, pick_answer.confidence, reasons=(f"none of the {len(options)} options fit this goal",))
+    ok, reason = confidence_gate(pick_answer.probabilities, pick_answer.confidence)
+    if not ok:
+        return ClosedSetProposal(None, pick_answer.confidence, reasons=(reason,))
+    command = command_for(pick_answer.choice)
+    chosen_label = label_for(pick_answer.choice)
+    gate_result = await gate_command(jev, command, chosen_label=chosen_label, instructions=gate_instructions)
+    if verbose:
+        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
+    ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
+    return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons)

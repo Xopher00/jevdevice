@@ -133,6 +133,13 @@ class JevClient:
             except httpx.HTTPError as error:
                 raise JevError(f"Jev request failed ({_safe_error_summary(error)})") from error
         payload = response.json()
-        if "usage" in payload:
-            self.usage.record(Usage(**payload["usage"]))
+        if usage := payload.get("usage"):
+            # Only the fields the ledger tracks -- an API that adds or drops a key must
+            # not turn an otherwise-successful request into a TypeError.
+            self.usage.record(Usage(
+                input_tokens=usage.get("input_tokens", 0),
+                output_tokens=usage.get("output_tokens", 0),
+            ))
+        if "answers" not in payload:
+            raise JevError(f"Jev response has no answers: {str(payload)[:300]}")
         return {name: _parse_answer(raw) for name, raw in payload["answers"].items()}

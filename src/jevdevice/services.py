@@ -11,7 +11,14 @@ import re
 from dataclasses import dataclass
 
 from .common import gated
-from .gate import CommandVariant, Pending, gate_command, resolve_gate
+from .gate import (
+    ClosedSetProposal,
+    CommandVariant,
+    Pending,
+    gate_command,
+    propose_from_closed_set,
+    resolve_gate,
+)
 from .jev import Choice, JevClient, Noul
 from .narrowing import narrow_and_pick
 from .transport import AdbTransport
@@ -169,42 +176,24 @@ async def execute_toggle(
     return ToggleOutcome(result.exit_code, check_service, resolve_verdict.confidence, satisfied)
 
 
-@dataclass
-class KeyEventProposal:
-    key: str | None
-    confidence: float
-    ready: CommandVariant | None = None
-    pending: Pending | None = None
-    reasons: tuple[str, ...] = ()
-
-
-async def propose_keyevent(jev: JevClient, goal: str, *, verbose: bool = True) -> KeyEventProposal:
-    answers = await jev.ask(
-        {"goal": goal, "key_options": dict.fromkeys(KEY_EVENTS)},
-        {
-            "key": Choice(instructions="Which key/button press would achieve this goal?", criteria=dict.fromkeys(KEY_EVENTS)),
-            "any_fit": Noul(instructions="Given key_options, does any of them fit this goal?"),
-        },
+async def propose_keyevent(jev: JevClient, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
+    return await propose_from_closed_set(
+        jev, goal, dict.fromkeys(KEY_EVENTS),
+        options_key="key_options",
+        pick_instructions="Which key/button press would achieve this goal?",
+        any_fit_instructions="Given key_options, does any of them fit this goal?",
+        pick_verb="key",
+        command_for=lambda key: CommandVariant(command=f"input keyevent KEYCODE_{key}", rationale=f"press {key} per the goal"),
+        label_for=lambda key: f"press {key}",
+        gate_instructions=KEYEVENT_SAFE_INSTRUCTIONS,
+        verbose=verbose,
     )
-    key_pick = answers["key"]
-    if verbose:
-        print(f"picked key: {key_pick.choice} (confidence {key_pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})")
-    if answers["any_fit"].noul < 0.5:
-        return KeyEventProposal(None, key_pick.confidence, reasons=(f"none of the {len(KEY_EVENTS)} keys fit this goal",))
-    key = gated(key_pick)
-    if key is None:
-        return KeyEventProposal(None, key_pick.confidence, reasons=("confidence gate rejected the key pick",))
-
-    command = CommandVariant(command=f"input keyevent KEYCODE_{key}", rationale=f"press {key} per the goal")
-    chosen_label = f"press {key}"
-    gate_result = await gate_command(jev, command, chosen_label=chosen_label, instructions=KEYEVENT_SAFE_INSTRUCTIONS)
-    if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
-    ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return KeyEventProposal(key, key_pick.confidence, ready, pending, reasons)
 
 
-async def execute_keyevent(transport: AdbTransport, command: CommandVariant) -> int:
+async def execute_command(transport: AdbTransport, command: CommandVariant) -> int:
+    """Run an already-gated single command; the exit code is all there is to report.
+    Shared by keyevent/swipe/set_dnd -- their proposals differ only in how the command
+    is built; none can carry a hidden extra effect once gated."""
     result = await transport.run(command.command)
     return result.exit_code
 
@@ -216,44 +205,18 @@ async def take_screenshot(transport: AdbTransport) -> bytes:
     return await transport.run_binary("screencap -p")
 
 
-@dataclass
-class DndProposal:
-    mode: str | None
-    confidence: float
-    ready: CommandVariant | None = None
-    pending: Pending | None = None
-    reasons: tuple[str, ...] = ()
-
-
-async def propose_dnd(jev: JevClient, goal: str, *, verbose: bool = True) -> DndProposal:
-    answers = await jev.ask(
-        {"goal": goal, "mode_options": DND_MODES},
-        {
-            "mode": Choice(instructions="Which Do Not Disturb mode does this goal want?", criteria=DND_MODES),
-            "any_fit": Noul(instructions="Given mode_options, does any of them fit this goal?"),
-        },
+async def propose_dnd(jev: JevClient, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
+    return await propose_from_closed_set(
+        jev, goal, DND_MODES,
+        options_key="mode_options",
+        pick_instructions="Which Do Not Disturb mode does this goal want?",
+        any_fit_instructions="Given mode_options, does any of them fit this goal?",
+        pick_verb="DND mode",
+        command_for=lambda mode: CommandVariant(command=f"cmd notification set_dnd {mode}", rationale=f"set Do Not Disturb to {mode} per the goal"),
+        label_for=lambda mode: f"set Do Not Disturb to {mode}",
+        gate_instructions=DND_SAFE_INSTRUCTIONS,
+        verbose=verbose,
     )
-    mode_pick = answers["mode"]
-    if verbose:
-        print(f"picked DND mode: {mode_pick.choice} (confidence {mode_pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})")
-    if answers["any_fit"].noul < 0.5:
-        return DndProposal(None, mode_pick.confidence, reasons=(f"none of the {len(DND_MODES)} DND modes fit this goal",))
-    mode = gated(mode_pick)
-    if mode is None:
-        return DndProposal(None, mode_pick.confidence, reasons=("confidence gate rejected the DND mode pick",))
-
-    command = CommandVariant(command=f"cmd notification set_dnd {mode}", rationale=f"set Do Not Disturb to {mode} per the goal")
-    chosen_label = f"set Do Not Disturb to {mode}"
-    gate_result = await gate_command(jev, command, chosen_label=chosen_label, instructions=DND_SAFE_INSTRUCTIONS)
-    if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
-    ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return DndProposal(mode, mode_pick.confidence, ready, pending, reasons)
-
-
-async def execute_dnd(transport: AdbTransport, command: CommandVariant) -> int:
-    result = await transport.run(command.command)
-    return result.exit_code
 
 
 @dataclass

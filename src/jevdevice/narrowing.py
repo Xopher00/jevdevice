@@ -14,9 +14,9 @@ matching.decide() combines everything.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
-from .jev import Choice, JevClient, Noul
+from .jev import Answer, Choice, JevClient, Noul
 from .matching import NarrowVerdict, chunk_candidates, decide, ground_candidates
 
 CHUNK_SIZE = 200  # headroom under Jev's 255-option Choice cap
@@ -26,6 +26,17 @@ MAX_CONCURRENT = 3  # bound the fan-out; jev.py already backs off on 429/529
 
 def _as_criteria(items: list[str]) -> dict[str, None]:
     return {item: None for item in items}
+
+
+def fit_questions(shortlist: Sequence[str], fit_instructions: str, describe: Callable[[str], str] = lambda c: c) -> dict[str, Noul]:
+    """One "does this candidate really fit" Noul per shortlist entry, keyed fit_0..n in
+    shortlist order -- shared by narrow_and_pick and ui.py's fused pick+gate asks."""
+    return {f"fit_{i}": Noul(instructions=fit_instructions.format(candidate=describe(c))) for i, c in enumerate(shortlist)}
+
+
+def extract_fits(answers: dict[str, Answer], shortlist: Sequence[str]) -> dict[str, float]:
+    """Candidate -> its fit Noul; keys align with fit_questions."""
+    return {c: answers[f"fit_{i}"].noul for i, c in enumerate(shortlist)}
 
 
 async def _score_chunk(
@@ -93,12 +104,11 @@ async def narrow_and_pick(
 
     evidence = await evidence_for(shortlist) if evidence_for else {}
     criteria = {c: evidence.get(c) for c in shortlist}
-    fit_keys = {f"fit_{i}": c for i, c in enumerate(shortlist)}
     state = {"goal": query, "candidates": criteria, **(state_extra or {})}
     answers = await jev.ask(state, {
         "pick": Choice(instructions=instructions, criteria=criteria),
-        **{key: Noul(instructions=fit_instructions.format(candidate=describe(c))) for key, c in fit_keys.items()},
+        **fit_questions(shortlist, fit_instructions, describe),
     })
     pick = answers["pick"]
-    fits = {c: answers[key].noul for key, c in fit_keys.items()}
+    fits = extract_fits(answers, shortlist)
     return decide(pick.choice, pick.probabilities, pick.confidence, fits, candidates, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting)
