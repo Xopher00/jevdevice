@@ -41,6 +41,7 @@ ENV_ENABLED = "JEV_JOURNAL"  # "0"/"off" disables emission entirely (tests, benc
 
 DECISION = "decision"
 OUTCOME = "outcome"
+CALIBRATION = "calibration"
 UNLABELED = "unlabeled"
 
 # Verification values for outcome rows. "verified" = the flow's own check passed
@@ -245,6 +246,29 @@ class DecisionJournal:
             print(f"journal write failed: {exc}")
 
     # -- reading ---------------------------------------------------------
+
+    def record_calibration(
+        self, *, event: str, engine: str | None = None, provenance: dict | None = None,
+        result: dict | None = None,
+    ) -> None:
+        """One row per continuous-calibration loop run (P4.5): the proposed
+        fits (or the documented non-proposal), the shadow-run verdicts under
+        current vs proposed thresholds, and the window provenance. Additive
+        row type -- replay() yields it like any other row."""
+        if not self.enabled:
+            return
+        row = {
+            "type": CALIBRATION,
+            "ts": self.clock().isoformat(timespec="milliseconds"),
+            "event": event,
+            "engine": engine,
+            "provenance": provenance,
+            "result": result,
+        }
+        try:
+            self._append({key: self._blobify(value) for key, value in row.items()})
+        except Exception as exc:  # noqa: BLE001 -- fail-open: telemetry must never break the decision path
+            print(f"journal write failed: {exc}")
 
     def _resolve_value(self, value):
         if (
