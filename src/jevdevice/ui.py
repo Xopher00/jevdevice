@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import shlex
+import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -101,6 +102,7 @@ class TapProposal:
     ready: CommandVariant | None = None
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
+    gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
 
 
 async def _fused_pick_and_gate(
@@ -126,7 +128,10 @@ async def _fused_pick_and_gate(
             for key, c in safe_keys.items()
         },
     }
-    answers = await jev.ask({"goal": goal, "candidates": criteria}, questions)
+    # One call_id covers the fused pick + its own gate answer, so the downstream
+    # outcome row joins the single ask that produced both.
+    call_id = str(uuid.uuid4())
+    answers = await jev.ask({"goal": goal, "candidates": criteria}, questions, phase="recall", call_id=call_id)
     pick = answers["pick"]
     fits = extract_fits(answers, labels)
     verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, labels)
@@ -134,7 +139,7 @@ async def _fused_pick_and_gate(
         return verdict, None
     command = CommandVariant(command=command_for(elements[verdict.choice]), rationale=f"{chosen_label_for(verdict.choice)} per the goal")
     safe_by_candidate = {c: answers[key].noul for key, c in safe_keys.items()}
-    return verdict, finalize_gate(command, safe_by_candidate[verdict.choice])
+    return verdict, finalize_gate(command, safe_by_candidate[verdict.choice], call_id=call_id)
 
 
 async def _cached_or_narrow(
@@ -205,7 +210,7 @@ async def _propose_gesture(
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons)
+    return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons, gate_result=gate_result)
 
 
 async def propose_tap(
@@ -319,7 +324,7 @@ async def scroll_to_find(
             jev, goal, list(elements),
             instructions="Which real on-screen item is the target this goal is scrolling to find?",
             fit_instructions="Is {candidate} really the target this goal describes?",
-            describe=lambda c: elements[c].description or c,
+            describe=lambda c, elements=elements: elements[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
         )
         if verbose:
             print(f"attempt {attempt}/{max_attempts}: picked {verdict.choice!r} ok={verdict.ok}")
@@ -346,13 +351,15 @@ async def _verify_after_action(
         await asyncio.sleep(delay)
         # A fixed-length raw-XML truncation can cut off the real evidence entirely (confirmed
         # live); compact per-element labels carry far more real signal per character.
-        screen_after = describe_screen(await dump_screen(transport), goal=goal)
+        truncation: dict = {}
+        screen_after = describe_screen(await dump_screen(transport), goal=goal, telemetry=truncation)
         answers = await jev.ask(
             {"goal": goal, "acted_on": acted_on, "screen_after": screen_after},
             {"satisfied": Noul(instructions="screen_after lists every real element currently on "
                                              "screen, each described by its own real text/"
                                              "resource-id/content-desc. Given screen_after, is "
                                              "the goal now achieved?")},
+            phase="verify", truncation=truncation,
         )
         satisfied = answers["satisfied"].noul
         if satisfied >= 0.5:
@@ -395,6 +402,7 @@ class TypeProposal:
     ready: CommandVariant | None = None
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
+    gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
 
 
 def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
@@ -422,6 +430,7 @@ async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | Non
             "value": Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans}),
             "any_fit": Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?"),
         },
+        phase="fill",
     )
 
 
@@ -442,7 +451,7 @@ async def _fused_field_and_value(
         state["candidate_values"] = spans
         questions["value"] = Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans})
         questions["any_fit_value"] = Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?")
-    answers = await jev.ask(state, questions)
+    answers = await jev.ask(state, questions, phase="fill")
     pick = answers["pick"]
     fits = extract_fits(answers, labels)
     # A field's label embeds its live text, so it reads as a new candidate once typed into --
@@ -511,7 +520,7 @@ async def propose_type(
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return TypeProposal(field_verdict.choice, value, field_verdict.confidence, ready, pending, reasons)
+    return TypeProposal(field_verdict.choice, value, field_verdict.confidence, ready, pending, reasons, gate_result=gate_result)
 
 
 async def execute_type(

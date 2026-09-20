@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
@@ -120,6 +121,11 @@ class GateResult:
     verdict: str
     reason: str
     noul_confidence: float | None = None
+    # Journal linkage: the ask() call whose answer produced this verdict, so the
+    # approval/execution flow (mcp_server PendingAction) can join its outcome row
+    # to the gate's decision row. None for verdicts settled without an ask
+    # (read_only/deny_listed fast paths).
+    call_id: str | None = None
 
 
 @dataclass
@@ -156,6 +162,7 @@ def confirm_with_human(command: CommandVariant, chosen_label: str, noul_confiden
 async def gate_command(
     jev: JevClient, command: CommandVariant, chosen_label: str, threshold: float = 0.8,
     evidence: dict | None = None, instructions: str = DEFAULT_SAFE_INSTRUCTIONS,
+    *, call_id: str | None = None,
 ) -> GateResult:
     """`evidence` is real, code-verified data backing the command (e.g. the
     tapped element's actual on-screen bounds) -- something the model can check
@@ -167,23 +174,30 @@ async def gate_command(
     if is_denied(command.command):
         return GateResult(verdict=GateVerdict.DENIED, reason="deny_listed")
 
+    # The call_id is generated HERE (not inside ask()) so it can travel onto the
+    # GateResult -> Pending -> PendingAction -> outcome row and join the two rows.
+    call_id = call_id or str(uuid.uuid4())
     answers = await jev.ask(
         {"chosen_action": chosen_label, "proposed_command": command.command, "rationale": command.rationale,
          **(evidence or {})},
         {"safe": Noul(instructions=instructions)},
+        phase="gate", call_id=call_id,
     )
-    return finalize_gate(command, answers["safe"].noul, threshold)
+    return finalize_gate(command, answers["safe"].noul, threshold, call_id=call_id)
 
 
-def finalize_gate(command: CommandVariant, confidence: float, threshold: float = 0.8) -> GateResult:
+def finalize_gate(
+    command: CommandVariant, confidence: float, threshold: float = 0.8, *, call_id: str | None = None,
+) -> GateResult:
     """Applies the same deny-list + threshold rule gate_command does, but takes an
     already-computed confidence -- for callers that got it speculatively (e.g. asked
-    alongside a narrowing pick in one batched request) instead of via their own ask."""
+    alongside a narrowing pick in one batched request) instead of via their own ask.
+    `call_id` joins the verdict to that shared ask's decision row (see _fused_pick_and_gate)."""
     if is_denied(command.command):
         return GateResult(verdict=GateVerdict.DENIED, reason="deny_listed")
     if confidence >= threshold:
-        return GateResult(verdict=GateVerdict.APPROVED, reason="jev_confirmed", noul_confidence=confidence)
-    return GateResult(verdict=GateVerdict.NEEDS_APPROVAL, reason="jev_uncertain", noul_confidence=confidence)
+        return GateResult(verdict=GateVerdict.APPROVED, reason="jev_confirmed", noul_confidence=confidence, call_id=call_id)
+    return GateResult(verdict=GateVerdict.NEEDS_APPROVAL, reason="jev_uncertain", noul_confidence=confidence, call_id=call_id)
 
 
 @dataclass
@@ -196,6 +210,7 @@ class ClosedSetProposal:
     ready: CommandVariant | None = None
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
+    gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
 
 
 async def propose_from_closed_set(
@@ -214,6 +229,7 @@ async def propose_from_closed_set(
             "pick": Choice(instructions=pick_instructions, criteria=options),
             "any_fit": Noul(instructions=any_fit_instructions),
         },
+        phase="fill",
     )
     pick_answer = answers["pick"]
     if verbose:
@@ -229,4 +245,4 @@ async def propose_from_closed_set(
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons)
+    return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons, gate_result=gate_result)

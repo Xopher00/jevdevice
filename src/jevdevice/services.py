@@ -14,6 +14,7 @@ from .common import gated
 from .gate import (
     ClosedSetProposal,
     CommandVariant,
+    GateResult,
     Pending,
     gate_command,
     propose_from_closed_set,
@@ -93,6 +94,7 @@ class ToggleProposal:
     ready: CommandVariant | None = None
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
+    gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
 
 
 async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> ToggleProposal:
@@ -105,6 +107,7 @@ async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, 
             "enabled": Choice(instructions="Does the goal want it turned on or off?", criteria={"on": None, "off": None}),
             "names_one": Noul(instructions="Given radio_options, does the goal specifically ask about one of them?"),
         },
+        phase="fill",
     )
     service_pick, enabled_pick = answers["service"], answers["enabled"]
     if verbose:
@@ -126,7 +129,7 @@ async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, 
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})\n")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return ToggleProposal(service, enabled, ready, pending, reasons)
+    return ToggleProposal(service, enabled, ready, pending, reasons, gate_result=gate_result)
 
 
 @dataclass
@@ -169,6 +172,7 @@ async def execute_toggle(
     verify = await jev.ask(
         {"goal": goal, "service_state": check.stdout[:2000]},
         {"satisfied": Noul(instructions="Given service_state, is the goal now achieved?")},
+        phase="verify",
     )
     satisfied = verify["satisfied"].noul
     if verbose:

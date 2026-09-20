@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from .app_launch import launch_app_for_goal
 from .common import bootstrap, gated
+from .decision_log import goal_scope
 from .elements import dump_screen, screen_summary
 from .gate import CommandVariant, confirm_with_human
 from .jev import Choice, JevClient, Noul
@@ -60,6 +62,7 @@ class KindPick:
     kind: str | None
     confidence: float
     reasons: tuple[str, ...] = ()
+    call_id: str | None = None  # journal linkage: escalated kind picks join their outcome row via this
 
 
 async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = None, *, verbose: bool = True) -> KindPick:
@@ -72,9 +75,10 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
         print("--- Jev picks the action kind (real Choice over ACTION_KINDS) ---")
     state: dict = {"goal": goal, "action_options": ACTION_KINDS}
     kind_instructions = "Which ONE action would this goal have you perform?"
+    truncation: dict = {}
     if transport is not None:
         try:
-            summary = screen_summary(await dump_screen(transport), goal=goal)
+            summary = screen_summary(await dump_screen(transport), goal=goal, telemetry=truncation)
             # on_screen's full label list measurably dilutes confidence even on an unrelated
             # goal (confirmed live: 1.00 -> 0.47-0.69) -- not worth it for kind selection.
             state["screen"] = {"foreground_package": summary["foreground_package"], "editable_fields": summary["editable_fields"]}
@@ -84,24 +88,26 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
                 "front. A goal naming typing or searching, when a real editable field is "
                 "already on screen, is type_text, not open_app."
             )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 -- any dump failure just means picking the kind without screen grounding
             pass
+    call_id = str(uuid.uuid4())
     answers = await jev.ask(
         state,
         {
             "kind": Choice(instructions=kind_instructions, criteria=ACTION_KINDS),
             "any_fit": Noul(instructions="Given action_options, does any of them fit this goal?"),
         },
+        phase="kind", call_id=call_id, truncation=truncation,
     )
     kind_pick = answers["kind"]
     if verbose:
         print(f"picked kind: {kind_pick.choice} (confidence {kind_pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})\n")
     if answers["any_fit"].noul < 0.5:
-        return KindPick(None, kind_pick.confidence, (f"none of the {len(ACTION_KINDS)} action kinds fit this goal",))
+        return KindPick(None, kind_pick.confidence, (f"none of the {len(ACTION_KINDS)} action kinds fit this goal",), call_id=call_id)
     kind = gated(kind_pick)
     if kind is None:
-        return KindPick(None, kind_pick.confidence, ("confidence gate rejected the action-kind pick",))
-    return KindPick(kind, kind_pick.confidence)
+        return KindPick(None, kind_pick.confidence, ("confidence gate rejected the action-kind pick",), call_id=call_id)
+    return KindPick(kind, kind_pick.confidence, call_id=call_id)
 
 
 @dataclass
@@ -171,6 +177,11 @@ async def run_toolkit(jev: JevClient, transport: AdbTransport, goal: str, *, ver
     """CLI convenience: one goal -> one atomic action, resolving needs_approval
     with a blocking prompt. Sequencing multi-step goals is the caller's job --
     run this (or the matching MCP tool) once per step."""
+    with goal_scope(goal):
+        return await _run_toolkit_scoped(jev, transport, goal, verbose=verbose)
+
+
+async def _run_toolkit_scoped(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True):
     if verbose:
         print(f"goal: {goal!r}\n")
     pick = await pick_kind(jev, goal, transport, verbose=verbose)

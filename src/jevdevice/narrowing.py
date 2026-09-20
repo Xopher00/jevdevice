@@ -50,7 +50,7 @@ async def _score_chunk(
     answers = await jev.ask(state, {
         "any": Noul(instructions="Could any of these candidates satisfy the goal?"),
         "pick": Choice(instructions=instructions, criteria=_as_criteria(chunk)),
-    })
+    }, phase="recall")
     return answers["any"].noul, answers["pick"].probabilities
 
 
@@ -108,7 +108,7 @@ async def narrow_and_pick(
     answers = await jev.ask(state, {
         "pick": Choice(instructions=instructions, criteria=criteria),
         **fit_questions(shortlist, fit_instructions, describe),
-    })
+    }, phase="ground")
     pick = answers["pick"]
     fits = extract_fits(answers, shortlist)
     return decide(pick.choice, pick.probabilities, pick.confidence, fits, candidates, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting)

@@ -177,23 +177,35 @@ def count_unlabeled_interactive(dump_xml: str) -> dict[str, int]:
     return counts
 
 
-def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150) -> list[str]:
+def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150, telemetry: dict | None = None) -> list[str]:
     """Compact real-element labels for a Jev state value, in place of raw XML (verbose,
     truncates blindly) -- reuses the same label shape narrow_and_pick already consumes
     everywhere else. When bounding is needed, order by goal-relevance first so the drop
-    favors what's actually relevant, not whatever came last in the tree."""
+    favors what's actually relevant, not whatever came last in the tree.
+
+    `telemetry`, when given a dict, is filled with what was cut (elements/bytes before
+    and after) -- the caller passes it on to its ask() so the decision row records the
+    truncation (Phase 1 T5; feeds the Phase 3 reducer audit). No behavior change."""
     labels = list(parse_all_elements(dump_xml))
+    if telemetry is not None:
+        telemetry["elements_before"] = len(labels)
+        telemetry["bytes_before"] = len(dump_xml.encode("utf-8"))
     if goal is not None and len(labels) > limit:
         labels = fuzzy_narrow(goal, labels, limit=len(labels))
-    return labels[:limit]
+    kept = labels[:limit]
+    if telemetry is not None:
+        telemetry["elements_after"] = len(kept)
+        telemetry["bytes_after"] = sum(len(label.encode("utf-8")) for label in kept)
+    return kept
 
 
-def screen_summary(dump_xml: str, *, goal: str | None = None) -> dict:
+def screen_summary(dump_xml: str, *, goal: str | None = None, telemetry: dict | None = None) -> dict:
     """One dump, everything a caller needs to ground a decision in the real current screen --
-    no extra device round trip beyond the dump already taken."""
+    no extra device round trip beyond the dump already taken. `telemetry` passes through
+    to describe_screen's truncation stats."""
     return {
         "foreground_package": foreground_package(dump_xml),
         "editable_fields": list(parse_editable_elements(dump_xml)),
         "clickable_count": len(parse_actionable_elements(dump_xml)),
-        "on_screen": describe_screen(dump_xml, goal=goal),
+        "on_screen": describe_screen(dump_xml, goal=goal, telemetry=telemetry),
     }

@@ -19,9 +19,12 @@ from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
 
+from . import decision_log
 from .app_launch import LaunchOutcome, launch_app_for_goal
 from .common import bootstrap
+from .decision_log import ESCALATED, FAILED, NONE, VERIFIED, goal_scope
 from .dispatch import KIND_TABLE, pick_kind
+from .elements import dump_screen, foreground_package
 from .gate import CommandVariant, Pending
 from .services import DumpsysOutcome, ToggleOutcome, run_dumpsys_query, take_screenshot
 from .ui import ActionOutcome, scroll_to_find
@@ -38,6 +41,7 @@ class PendingAction:
     confidence: float
     pending: Pending
     verify: bool = True
+    call_id: str | None = None  # journal linkage: joins the outcome row to the gate's decision row
 
 
 _PENDING: dict[str, PendingAction] = {}
@@ -55,9 +59,71 @@ def _pending_response(action_id: str, action: PendingAction) -> dict:
 
 def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: float, pending: Pending, verify: bool = True) -> dict:
     action_id = str(uuid.uuid4())
-    action = PendingAction(goal, kind, resume_arg, confidence, pending, verify)
+    action = PendingAction(
+        goal, kind, resume_arg, confidence, pending, verify,
+        call_id=pending.gate_result.call_id if pending.gate_result else None,
+    )
     _PENDING[action_id] = action
     return _pending_response(action_id, action)
+
+
+# --- outcome-row emission (Phase 1 T4) -------------------------------------
+
+def _call_id_of(proposal) -> str | None:
+    """The gate ask's call_id carried by any proposal shape, so executed actions
+    join their outcome row to the decision row that approved them."""
+    gate = getattr(proposal, "gate_result", None)
+    if gate is not None and gate.call_id:
+        return gate.call_id
+    pending = getattr(proposal, "pending", None)
+    if pending is not None and pending.gate_result is not None:
+        return pending.gate_result.call_id
+    return None
+
+
+def _verification_from_response(response: dict) -> str:
+    """The flow's own status -> journal verification. ok = verified; a non-zero
+    exit is an outright failure; anything else that ran is unconfirmed (none)."""
+    status = response.get("status")
+    if status == "ok":
+        return VERIFIED
+    if status == "escalated":
+        return ESCALATED
+    if response.get("exit_code") not in (None, 0):
+        return FAILED
+    return NONE
+
+
+def _emit_outcome(
+    *, call_id: str | None = None, executed_command: str | None = None,
+    verification: str = NONE, status: str | None = None, response: dict | None = None,
+    recovery_command: str | None = None, graph_edge: dict | None = None,
+    decision: str | None = None,
+) -> None:
+    """Fire-and-forget outcome row; DecisionJournal.record_outcome is fail-open,
+    so telemetry can never break the action path it observes."""
+    reasons = exit_code = satisfied = None
+    if response is not None:
+        status = response.get("status", status)
+        reasons = response.get("reasons")
+        exit_code = response.get("exit_code")
+        satisfied = response.get("satisfied")
+    goal_id, goal = decision_log.current_goal()
+    decision_log.get_journal().record_outcome(
+        call_id=call_id, executed_command=executed_command, verification=verification,
+        status=status, recovery_command=recovery_command, graph_edge=graph_edge,
+        device=transport.serial, decision=decision, reasons=reasons,
+        exit_code=exit_code, satisfied=satisfied, goal=goal, goal_id=goal_id,
+    )
+
+
+async def _foreground_safe() -> str | None:
+    """Foreground package for graph_edge rows; a failed dump is telemetry loss,
+    never an execution failure."""
+    try:
+        return foreground_package(await dump_screen(transport))
+    except Exception:  # noqa: BLE001 -- telemetry only
+        return None
 
 
 def _toggle_response(outcome: ToggleOutcome) -> dict:
@@ -159,10 +225,16 @@ async def _do_gated(kind: str, goal: str, *, verify: bool = True, auto_approve: 
     command = _resolve_command(proposal, auto_approve)
     if command is None:
         if proposal.pending is not None:
+            # Proposed but awaiting a human decision: an escalation row now, the
+            # execution row later from device_approve (same call_id joins them).
+            _emit_outcome(call_id=_call_id_of(proposal), verification=ESCALATED, status="needs_approval")
             return _store_pending(goal, kind, handler.resume_arg(proposal), getattr(proposal, "confidence", 0.0), proposal.pending, verify)
+        _emit_outcome(call_id=_call_id_of(proposal), verification=ESCALATED, status="escalated")
         return {"status": "escalated", "reasons": list(proposal.reasons)}
     outcome = await handler.execute(jev, transport, goal, proposal, command, verify=verify, verbose=False)
     response = _RESPONSE_FOR[kind](outcome)
+    _emit_outcome(call_id=_call_id_of(proposal), executed_command=command.command,
+                  verification=_verification_from_response(response), response=response)
     if kind in ("tap", "long_press", "type_text"):
         response = {**response, "elapsed_s": round(time.monotonic() - t0, 2)}
     return response
@@ -213,18 +285,20 @@ async def device_do(
     default since an image costs real context; ask for one at a checkpoint, not after every
     single step in a sequence. Never plans or chains more than one action; sequencing multiple
     goals is still the calling agent's job."""
-    kind_pick = await pick_kind(jev, goal, transport, verbose=False)
-    kind = kind_pick.kind
-    if kind is None:
-        return await _with_screenshot({"status": "escalated", "reasons": list(kind_pick.reasons)}, include=include_screenshot)
-    # A goal that IS a screenshot returns the image even with include_screenshot=False --
-    # otherwise device_do(goal="take a screenshot") would answer {"status": "ok"} and nothing else.
-    include = include_screenshot or kind == "screenshot"
-    if kind in KIND_TABLE:
-        response = await _do_gated(kind, goal, verify=verify, auto_approve=auto_approve)
-    else:
-        response = await _UNGATED_DISPATCH[kind](goal, verify=verify, auto_approve=auto_approve, direction=direction, max_attempts=max_attempts)
-    return await _with_screenshot(response, include=include)
+    with goal_scope(goal):
+        kind_pick = await pick_kind(jev, goal, transport, verbose=False)
+        kind = kind_pick.kind
+        if kind is None:
+            _emit_outcome(call_id=kind_pick.call_id, verification=ESCALATED, status="escalated")
+            return await _with_screenshot({"status": "escalated", "reasons": list(kind_pick.reasons)}, include=include_screenshot)
+        # A goal that IS a screenshot returns the image even with include_screenshot=False --
+        # otherwise device_do(goal="take a screenshot") would answer {"status": "ok"} and nothing else.
+        include = include_screenshot or kind == "screenshot"
+        if kind in KIND_TABLE:
+            response = await _do_gated(kind, goal, verify=verify, auto_approve=auto_approve)
+        else:
+            response = await _UNGATED_DISPATCH[kind](goal, verify=verify, auto_approve=auto_approve, direction=direction, max_attempts=max_attempts)
+        return await _with_screenshot(response, include=include)
 
 
 @mcp.tool()
@@ -244,18 +318,31 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
     action = _PENDING.pop(thread_id, None)
     if action is None:
         return await _with_screenshot({"status": "error", "reason": f"unknown or already-resolved thread_id {thread_id!r}"}, include=include_screenshot)
-    if decision != "approve":
-        return await _with_screenshot({"status": "not_executed"}, include=include_screenshot)
+    with goal_scope(action.goal):
+        if decision != "approve":
+            _emit_outcome(call_id=action.call_id, verification=NONE, status="not_executed", decision="deny")
+            return await _with_screenshot({"status": "not_executed"}, include=include_screenshot)
 
-    approved = action.pending.command
-    if command:
-        approved = CommandVariant(command=command, rationale=approved.rationale)
+        approved = action.pending.command
+        recovery_command = None
+        if command:
+            approved = CommandVariant(command=command, rationale=approved.rationale)
+            # A human-corrected command is a recovery-pair input (Phase 7 mining).
+            recovery_command = approved.command
 
-    handler = KIND_TABLE[action.kind]
-    resume_proposal = _ResumeProposal(element=action.resume_arg, service=action.resume_arg, confidence=action.confidence)
-    outcome = await handler.execute(jev, transport, action.goal, resume_proposal, approved, verify=action.verify, verbose=False)
-    response = _RESPONSE_FOR[action.kind](outcome)
-    return await _with_screenshot(response, include=include_screenshot)
+        before = await _foreground_safe()
+        handler = KIND_TABLE[action.kind]
+        resume_proposal = _ResumeProposal(element=action.resume_arg, service=action.resume_arg, confidence=action.confidence)
+        outcome = await handler.execute(jev, transport, action.goal, resume_proposal, approved, verify=action.verify, verbose=False)
+        response = _RESPONSE_FOR[action.kind](outcome)
+        after = await _foreground_safe()
+        graph_edge = {"from_node": before, "to_node": after} if (before or after) else None
+        _emit_outcome(
+            call_id=action.call_id, executed_command=approved.command,
+            verification=_verification_from_response(response), response=response,
+            recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
+        )
+        return await _with_screenshot(response, include=include_screenshot)
 
 
 def main() -> None:

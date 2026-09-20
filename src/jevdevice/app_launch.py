@@ -33,6 +33,7 @@ async def verify_with_retry(
             {"goal": goal, "chosen_package": chosen, "foreground_package": observed, "attempt": attempt},
             {"satisfied": Noul(instructions="Is foreground_package the app named by chosen_package, or otherwise "
                                              "evidence that the goal is now achieved for chosen_package?")},
+            phase="verify",
         )
         satisfied = answers["satisfied"].noul
         if satisfied >= 0.5:
