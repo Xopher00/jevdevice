@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@astudioplus/codegraph-mcp@0.20.1",
+        "--exclude", ".venv",
+        "--exclude", "build",
+        "--exclude", ".pytest_cache",
+        "--exclude", ".ruff_cache"
+      ]
+    }
+  }
+}

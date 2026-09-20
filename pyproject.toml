@@ -10,6 +10,8 @@ dependencies = [
     "langgraph>=0.2,<1",
     "uiautomator2>=3.7.0",
     "adbutils[apk]>=2.12.0",
+    "laya>=0.3.3",
+    "transformers>=4.48",
 ]
 
 [project.scripts]
