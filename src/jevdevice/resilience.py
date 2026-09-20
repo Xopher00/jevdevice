@@ -4,12 +4,11 @@ a run of many requests hitting a genuinely dead/unreachable endpoint. Opt-in, no
 JevClient -- a single CLI/MCP call has nothing to gain from failing fast after N failures
 when N is 1.
 
-Phase 2 T5 audit verdict (2026-09-20): still not wired. Imported nowhere under src/ or
-src/jevdevice/calibrate/ (codegraph find_by_imports: only experiment/action_chain.py, which
-is gitignored research code -- see LOGBOOK). Judge calls under laya are in-process (nothing
-to break on the network), so the breaker's only remaining home would be the ADB retry loop;
-transport.py is frozen, and no failure pattern in the logbook shows a failing-device storm
-that per-call escalation doesn't already handle. Left dead, deliberately.
+Deliberately unwired: imported nowhere under src/ or src/jevdevice/calibrate/ (only the
+gitignored experiment/ research code). Judge calls under laya are in-process (nothing
+to break on the network), so the breaker's only remaining home would be the ADB retry
+loop, and no observed failure pattern there needs failing fast beyond what per-call
+escalation already handles.
 """
 
 from __future__ import annotations

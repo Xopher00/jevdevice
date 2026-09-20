@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jevdevice.budget import LAYA_PROFILE
 from jevdevice.matching import (
     chunk_candidates,
     decide,
@@ -17,11 +18,13 @@ def test_ground_candidates_splits_real_from_invented() -> None:
 
 
 def test_chunk_candidates_is_lossless() -> None:
+    # The in-process engine's chunk bound: losslessness must hold at the tight bound too.
+    bound = LAYA_PROFILE.chunk_size
     candidates = [f"pkg.{i}" for i in range(450)]
-    chunks = chunk_candidates(candidates, "goal", chunk_size=200)
+    chunks = chunk_candidates(candidates, "goal", chunk_size=bound)
     assert sum(len(c) for c in chunks) == len(candidates)
     assert set().union(*chunks) == set(candidates)
-    assert all(len(c) <= 200 for c in chunks)
+    assert all(len(c) <= bound for c in chunks)
 
 
 def test_chunk_candidates_handles_empty() -> None:

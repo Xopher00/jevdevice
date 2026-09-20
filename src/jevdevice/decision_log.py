@@ -58,7 +58,7 @@ _GOAL_CONTEXT: ContextVar[tuple[str, str] | None] = ContextVar("jevdevice_goal",
 
 
 def goal_id_for(goal_text: str) -> str:
-    """Stable short id so later phases can aggregate rows by goal (P7.5 recipes)."""
+    """Stable short id so rows can be aggregated by goal across sessions."""
     return hashlib.sha256(goal_text.encode("utf-8")).hexdigest()[:12]
 
 
@@ -111,7 +111,7 @@ class BlobStore:
 class DecisionJournal:
     """Append-only JSONL, one file per day (journal-YYYYMMDD.jsonl). Writes are
     a synchronous append per row -- no per-row fsync unless `fsync` says so --
-    which keeps the hot-loop cost in the microseconds (see the logbook benchmark).
+    which keeps the hot-loop cost in the microseconds.
     asyncio-single-threaded: one writer per event loop, like UsageLedger."""
 
     def __init__(

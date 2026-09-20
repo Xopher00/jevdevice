@@ -9,9 +9,9 @@ import json
 
 from mcp.shared.memory import create_connected_server_and_client_session
 
-# The placeholder TYPESAFE_AI_API line is gone (Phase 2 T3): bootstrap() requires
-# the key only for the jev engine, and test_decision_log's module import (which
-# runs first in a full-suite collection) provides one for that case.
+# bootstrap() requires the TYPESAFE_AI_API key only for the jev engine, and
+# test_decision_log's module import (which runs first in a full-suite collection)
+# provides one for that case -- no placeholder needed here.
 from jevdevice.common import SERIAL
 from jevdevice.elements import dump_screen, parse_actionable_elements
 from jevdevice.mcp_server import mcp

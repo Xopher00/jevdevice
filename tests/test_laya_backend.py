@@ -1,7 +1,7 @@
-"""Phase 2: LayaClient behind the engine flag -- contract mirror of JevClient.
+"""LayaClient behind the engine flag -- contract mirror of JevClient.
 
 Unit-level only: a scripted fake router stands in for laya's Router (the same
-payload shapes P0 observed live), so these tests never load the checkpoint.
+payload shapes the real one returns), so these tests never load the checkpoint.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class RecordingJournal:
 
 class FakeRouter:
     """Scripted Router.predict: records the wire body, returns the payload shape
-    P0 observed live (answers + usage + routing)."""
+    the real one returns (answers + usage + routing)."""
 
     def __init__(self, payload: dict | None = None, error: Exception | None = None) -> None:
         self.payload = payload or {
@@ -63,7 +63,7 @@ def _questions() -> dict:
     }
 
 
-# --- T1: the ask() contract ---------------------------------------------------
+# --- the ask() contract -------------------------------------------------------
 
 async def test_ask_returns_typed_answers_and_records_usage() -> None:
     client = LayaClient(journal=RecordingJournal(), router=FakeRouter())
@@ -107,7 +107,7 @@ async def test_decision_row_carries_laya_engine_and_pinned_revision() -> None:
 
 
 async def test_budget_overflow_valueerror_maps_to_jev_error_and_journals() -> None:
-    """P0 T2.7: laya raises ValueError on budget overflow; the message may blame
+    """Laya raises ValueError on budget overflow; the message may blame
     head_max_len even when max_len triggered it -- catch the type, never the text."""
     recorder = RecordingJournal()
     boom = ValueError("question 'pick' options exceed head_max_len=256")
@@ -128,13 +128,20 @@ async def test_ask_requires_questions_like_jev() -> None:
         await client.ask({"goal": "g"}, {})
 
 
+def test_checkpoint_resolves_from_the_local_cache_first() -> None:
+    """The pinned snapshot must load offline-first: once it's in the HF cache,
+    no process start pays a network round trip (the online fetch runs only if
+    the cache is cold)."""
+    assert "local_files_only=True" in LAYA_BACKEND_SRC
+
+
 def test_no_httpx_in_the_backend_module() -> None:
-    """T1 done-when: the new module must not grow a network dependency (an
-    'import httpx' anywhere; the word in prose/comments is fine)."""
+    """The backend module must not grow a network dependency (an 'import httpx'
+    anywhere; the word in prose/comments is fine)."""
     assert "import httpx" not in LAYA_BACKEND_SRC
 
 
-# --- T2: the engine flag ------------------------------------------------------
+# --- the engine flag ----------------------------------------------------------
 
 def test_bootstrap_laya_engine_needs_no_typesafe_key(monkeypatch) -> None:
     monkeypatch.delenv("TYPESAFE_AI_API", raising=False)
@@ -146,6 +153,7 @@ def test_bootstrap_laya_engine_needs_no_typesafe_key(monkeypatch) -> None:
 
 def test_bootstrap_jev_engine_requires_the_key(monkeypatch) -> None:
     monkeypatch.delenv("TYPESAFE_AI_API", raising=False)
+    monkeypatch.setattr("jevdevice.common.load_env_file", lambda *a, **k: None)  # pin: no .env on this machine
     monkeypatch.setenv("JEV_ENGINE", "jev")
     with pytest.raises(SystemExit):
         bootstrap(serial="test-serial")
@@ -154,6 +162,7 @@ def test_bootstrap_jev_engine_requires_the_key(monkeypatch) -> None:
 def test_bootstrap_default_engine_is_jev(monkeypatch) -> None:
     monkeypatch.delenv("JEV_ENGINE", raising=False)
     monkeypatch.delenv("TYPESAFE_AI_API", raising=False)
+    monkeypatch.setattr("jevdevice.common.load_env_file", lambda *a, **k: None)  # pin: no .env on this machine
     with pytest.raises(SystemExit):  # default engine demands the key
         bootstrap(serial="test-serial")
 
@@ -164,7 +173,7 @@ def test_bootstrap_rejects_unknown_engine(monkeypatch) -> None:
         bootstrap(serial="test-serial")
 
 
-# --- T4: ledger snapshots distinguish the engines -----------------------------
+# --- ledger snapshots distinguish the engines ----------------------------------
 
 def test_ledger_distinguishes_engines() -> None:
     jev = JevClient("test-key")

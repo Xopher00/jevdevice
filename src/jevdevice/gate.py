@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
+from .budget import choice_criteria, current_profile, is_abstain
 from .jev import Choice, JevClient, Noul
 from .matching import confidence_gate
 
@@ -222,11 +223,13 @@ async def propose_from_closed_set(
     """Shared propose pipeline for closed-set actions (keyevent, DND, swipe): one batched
     ask -- which option fits, and does any of them fit -- then the deterministic command
     built from the winning option goes through gate_command. Never executes; returns
-    reasons when nothing fits or the pick fails the confidence gate."""
+    reasons when nothing fits, the judge abstains (none_of_these), or the pick fails
+    the confidence gate."""
+    profile = current_profile(jev.engine_name)
     answers = await jev.ask(
         {"goal": goal, options_key: options},
         {
-            "pick": Choice(instructions=pick_instructions, criteria=options),
+            "pick": Choice(instructions=pick_instructions, criteria=choice_criteria(options, profile)),
             "any_fit": Noul(instructions=any_fit_instructions),
         },
         phase="fill",
@@ -234,6 +237,8 @@ async def propose_from_closed_set(
     pick_answer = answers["pick"]
     if verbose:
         print(f"picked {pick_verb}: {pick_answer.choice} (confidence {pick_answer.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})")
+    if is_abstain(pick_answer.choice):
+        return ClosedSetProposal(None, pick_answer.confidence, reasons=("judge abstained: picked none_of_these, so none of the options fit",))
     if answers["any_fit"].noul < 0.5:
         return ClosedSetProposal(None, pick_answer.confidence, reasons=(f"none of the {len(options)} options fit this goal",))
     ok, reason = confidence_gate(pick_answer.probabilities, pick_answer.confidence)

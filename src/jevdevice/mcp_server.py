@@ -67,7 +67,7 @@ def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: flo
     return _pending_response(action_id, action)
 
 
-# --- outcome-row emission (Phase 1 T4) -------------------------------------
+# --- outcome-row emission ---------------------------------------------------
 
 def _call_id_of(proposal) -> str | None:
     """The gate ask's call_id carried by any proposal shape, so executed actions
@@ -327,7 +327,7 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         recovery_command = None
         if command:
             approved = CommandVariant(command=command, rationale=approved.rationale)
-            # A human-corrected command is a recovery-pair input (Phase 7 mining).
+            # A human-corrected command is recorded as a recovery input.
             recovery_command = approved.command
 
         before = await _foreground_safe()

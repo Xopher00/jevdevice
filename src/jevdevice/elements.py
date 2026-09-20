@@ -10,6 +10,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
+from .budget import current_profile
 from .matching import fuzzy_narrow
 from .transport import AdbTransport
 
@@ -36,12 +37,13 @@ class Element:
     bounds: str  # real device-reported bounds string, e.g. "[166,1173][415,1615]" -- passed to the gate as evidence
     text: str = ""  # the node's own real current text, e.g. an EditText's existing content
     description: str = ""  # natural-language phrasing of the same real fields, for fit questions
+    short: str = ""  # short raw option label: the judge's Choice option text, ~1-3 tokens
 
 
 def _nearest_ancestor_bounds(node, parent_of: dict, attr: str) -> str | None:
     """Custom-drawn menus often mark only a container `attr="true"` and leave its labeled
-    text/icon children `attr="false"` -- confirmed live (a launcher long-press menu's "Missed
-    calls" label is clickable="false" two levels under a clickable="true" real tap target)."""
+    text/icon children `attr="false"` (e.g. a launcher long-press menu's "Missed calls"
+    label is clickable="false" two levels under a clickable="true" real tap target)."""
     ancestor = parent_of.get(node)
     while ancestor is not None:
         if ancestor.attrib.get(attr) == "true":
@@ -65,8 +67,8 @@ _CLASS_NOUNS = (
 
 
 def _natural_description(described: dict, attrs: dict) -> str:
-    """A raw `text='X' resource-id='Y'` label in a fit question measurably depresses Jev's
-    fit score versus the same facts phrased as a sentence (confirmed live: 0.60 vs 0.90)."""
+    """A raw `text='X' resource-id='Y'` label in a fit question depresses the fit
+    score versus the same facts phrased as a sentence."""
     class_name = attrs.get("class", "")
     noun = next((n for pattern, n in _CLASS_NOUNS if pattern in class_name), "element")
     clauses = []
@@ -79,15 +81,27 @@ def _natural_description(described: dict, attrs: dict) -> str:
     return f"the {noun} " + ", ".join(clauses) if clauses else f"the {noun}"
 
 
-def _context_label(node, parent_of: dict, attrs: dict) -> str | None:
-    """An unlabeled real node borrows the nearest labeled ancestor's real identity."""
+def _short_label(described: dict) -> str:
+    """The element's own short raw label: its real text, real content-desc, or
+    short resource-id -- the Choice option text, at ~1-3 tokens instead of the
+    full label's ~10+ (an in-process head fits ~20 options)."""
+    for key in ("text", "content-desc"):
+        if key in described:
+            return described[key]
+    return _short_id(described["resource-id"])
+
+
+def _context_identity(node, parent_of: dict, class_name: str) -> tuple[str, str] | None:
+    """An unlabeled real node borrows the nearest labeled ancestor's real identity.
+    Returns (short shown value, full 'Class under key=value' label) -- the short
+    value is the option text, the full label the state-text description."""
     ancestor = parent_of.get(node)
     while ancestor is not None:
         for key in ("resource-id", "content-desc", "text"):
             value = ancestor.attrib.get(key)
             if value:
                 shown = _short_id(value) if key == "resource-id" else value
-                return f"{_short_class(attrs.get('class', ''))} under {key}={shown!r}"
+                return shown, f"{_short_class(class_name)} under {key}={shown!r}"
         ancestor = parent_of.get(ancestor)
     return None
 
@@ -115,10 +129,13 @@ def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, l
             continue
         if described:
             label = " ".join(f"{k}={v!r}" for k, v in described.items())
+            short = _short_label(described)
         elif label_context and matched:
-            label = _context_label(node, parent_of, attrs)
-            if label is None:
+            identity = _context_identity(node, parent_of, attrs.get("class", ""))
+            if identity is None:
                 continue
+            shown, label = identity
+            short = shown
         else:
             continue
         match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
@@ -126,7 +143,7 @@ def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, l
             continue
         left, top, right, bottom = (int(n) for n in match.groups())
         description = _natural_description(described, attrs) if described else ""
-        elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""), description)
+        elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""), description, short)
     return elements
 
 
@@ -137,8 +154,8 @@ def parse_actionable_elements(dump_xml: str) -> dict[str, Element]:
     return _parse_elements(dump_xml, lambda attrs: attrs.get("clickable") == "true", ancestor_attr="clickable", label_context=True)
 
 
-# A subclass's own class name doesn't always contain "EditText" -- confirmed live:
-# Settings' search bar is a real android.widget.AutoCompleteTextView (extends EditText).
+# A subclass's own class name doesn't always contain "EditText" -- e.g. a search
+# bar can be a real android.widget.AutoCompleteTextView (extends EditText).
 _EDITABLE_CLASSES = ("EditText", "AutoCompleteTextView")
 
 
@@ -177,7 +194,24 @@ def count_unlabeled_interactive(dump_xml: str) -> dict[str, int]:
     return counts
 
 
-def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150, telemetry: dict | None = None) -> list[str]:
+def short_options(elements: dict[str, Element]) -> dict[str, Element]:
+    """Choice options for profiles with short_labels: short raw labels as the
+    option text -- what actually costs head tokens -- while the rich
+    descriptions stay in the state text. Values are the full Elements, so
+    callers keep coordinates/bounds/description keyed by the option text the
+    judge will answer with. Collisions (two real elements whose short labels
+    match) get a '#2'-style suffix: an option list can't repeat itself."""
+    result: dict[str, Element] = {}
+    for label, element in elements.items():
+        candidate, n = element.short or label, 1
+        while candidate in result:
+            n += 1
+            candidate = f"{element.short or label} #{n}"
+        result[candidate] = element
+    return result
+
+
+def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int | None = None, telemetry: dict | None = None) -> list[str]:
     """Compact real-element labels for a Jev state value, in place of raw XML (verbose,
     truncates blindly) -- reuses the same label shape narrow_and_pick already consumes
     everywhere else. When bounding is needed, order by goal-relevance first so the drop
@@ -185,7 +219,12 @@ def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150,
 
     `telemetry`, when given a dict, is filled with what was cut (elements/bytes before
     and after) -- the caller passes it on to its ask() so the decision row records the
-    truncation (Phase 1 T5; feeds the Phase 3 reducer audit). No behavior change."""
+    truncation. No behavior change.
+
+    `limit` is a named knob, never a bare int: the answering engine's profile
+    screen_limit (budget.py). With no explicit limit the process engine's profile
+    applies (JEV_ENGINE, the same env bootstrap reads)."""
+    limit = current_profile().screen_limit if limit is None else limit
     labels = list(parse_all_elements(dump_xml))
     if telemetry is not None:
         telemetry["elements_before"] = len(labels)
@@ -199,13 +238,13 @@ def describe_screen(dump_xml: str, *, goal: str | None = None, limit: int = 150,
     return kept
 
 
-def screen_summary(dump_xml: str, *, goal: str | None = None, telemetry: dict | None = None) -> dict:
+def screen_summary(dump_xml: str, *, goal: str | None = None, telemetry: dict | None = None, limit: int | None = None) -> dict:
     """One dump, everything a caller needs to ground a decision in the real current screen --
-    no extra device round trip beyond the dump already taken. `telemetry` passes through
-    to describe_screen's truncation stats."""
+    no extra device round trip beyond the dump already taken. `telemetry`/`limit` pass
+    through to describe_screen's truncation stats/profile knob."""
     return {
         "foreground_package": foreground_package(dump_xml),
         "editable_fields": list(parse_editable_elements(dump_xml)),
         "clickable_count": len(parse_actionable_elements(dump_xml)),
-        "on_screen": describe_screen(dump_xml, goal=goal, telemetry=telemetry),
+        "on_screen": describe_screen(dump_xml, goal=goal, telemetry=telemetry, limit=limit),
     }

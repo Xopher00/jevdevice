@@ -16,9 +16,9 @@ class Usage:
 @dataclasses.dataclass(frozen=True)
 class EngineInfo:
     """Which engine answered, on exactly which checkpoint -- the A/B join key
-    (Phase 5) and the calibration anchor (Phase 4). Snapshots from both engines
-    must distinguish themselves; the Jev path records this once at construction,
-    the Laya path refreshes it per ask with the predict's own routing payload."""
+    and the calibration anchor. Snapshots from both engines must distinguish
+    themselves; the Jev path records this once at construction, the Laya path
+    refreshes it per ask with the predict's own routing payload."""
 
     engine: str
     model_revision: str

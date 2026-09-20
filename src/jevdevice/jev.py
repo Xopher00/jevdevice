@@ -108,7 +108,7 @@ class JevClient:
         *, journal: decision_log.DecisionJournal | None = None,
     ) -> None:
         self._api_key = api_key
-        self._engine = "jev"  # journal rows; P2's LayaClient overrides this and reuses ask() unchanged
+        self._engine = "jev"  # journal rows; the LayaClient twin overrides this and reuses ask() unchanged
         self._model = model
         self._client = httpx.AsyncClient(timeout=30)
         self._journal = journal  # None -> module-level default journal (decision_log.get_journal())
@@ -116,6 +116,12 @@ class JevClient:
         # Journal rows carry engine+model_revision already; the ledger keeps the
         # same identity so token snapshots from both engines distinguish themselves.
         self.usage.record_engine(EngineInfo(engine="jev", model_revision=model))
+
+    @property
+    def engine_name(self) -> str:
+        """Which engine answers ask() -- budget profiles key off this, and both
+        engine names can coexist in one process."""
+        return self._engine
 
     async def aclose(self) -> None:
         await self._client.aclose()

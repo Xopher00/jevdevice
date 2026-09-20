@@ -13,6 +13,7 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from .budget import choice_criteria, current_profile, is_abstain
 from .elements import (
     Element,
     describe_screen,
@@ -22,6 +23,7 @@ from .elements import (
     parse_all_elements,
     parse_editable_elements,
     parse_long_clickable_elements,
+    short_options,
 )
 from .gate import (
     ClosedSetProposal,
@@ -35,7 +37,7 @@ from .gate import (
 )
 from .jev import Choice, JevClient, Noul
 from .matching import NarrowVerdict, decide, extract_value_spans, fuzzy_narrow
-from .narrowing import CHUNK_SIZE, extract_fits, fit_questions, narrow_and_pick
+from .narrowing import _abstain_verdict, extract_fits, fit_questions, narrow_and_pick
 from .services import execute_command
 from .transport import AdbTransport
 
@@ -106,24 +108,32 @@ class TapProposal:
 
 
 async def _fused_pick_and_gate(
-    jev: JevClient, goal: str, elements: dict[str, Element], *,
+    jev: JevClient, goal: str, options: dict[str, Element], *,
     pick_instructions: str, fit_instructions: str, safe_instructions: str,
     command_for, chosen_label_for,
 ) -> tuple[NarrowVerdict, GateResult | None]:
     """Narrow + gate in one batched ask instead of two sequential round trips: a per-candidate
     safety Noul (TypeSafe's speculative-fan-out pattern) is asked alongside the pick, using each
     candidate's own real bounds/command, so the winner's gate answer is already in hand. Shared by
-    tap and long_press -- only the command/label shape differs between them."""
-    labels = list(elements)
-    criteria = {c: None for c in labels}
-    safe_keys = {f"safe_{i}": c for i, c in enumerate(labels)}
+    tap and long_press -- only the command/label shape differs between them.
+
+    `options` is the option map the judge answers over (short raw labels on profiles with
+    short_labels, full labels otherwise); option keys double as the dict keys for the
+    winner's coordinates/bounds."""
+    profile = current_profile(jev.engine_name)
+    if profile.descriptions_in_state:
+        # Rich descriptions ride in the state body; the option list in the head stays short.
+        criteria = {c: (element.description or None) for c, element in options.items()}
+    else:
+        criteria = {c: None for c in options}
+    safe_keys = {f"safe_{i}": c for i, c in enumerate(options)}
     questions = {
-        "pick": Choice(instructions=pick_instructions, criteria=criteria),
-        **fit_questions(labels, fit_instructions, lambda c: elements[c].description or c),
+        "pick": Choice(instructions=pick_instructions, criteria=choice_criteria(criteria, profile)),
+        **fit_questions(options, fit_instructions, lambda c: options[c].description or c),
         **{
             key: Noul(instructions=(
-                f"chosen_action={chosen_label_for(c)!r}. proposed_command={command_for(elements[c])!r}. "
-                f"target_bounds={elements[c].bounds!r}. {safe_instructions}"
+                f"chosen_action={chosen_label_for(c)!r}. proposed_command={command_for(options[c])!r}. "
+                f"target_bounds={options[c].bounds!r}. {safe_instructions}"
             ))
             for key, c in safe_keys.items()
         },
@@ -133,11 +143,13 @@ async def _fused_pick_and_gate(
     call_id = str(uuid.uuid4())
     answers = await jev.ask({"goal": goal, "candidates": criteria}, questions, phase="recall", call_id=call_id)
     pick = answers["pick"]
-    fits = extract_fits(answers, labels)
-    verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, labels)
+    fits = extract_fits(answers, options)
+    if is_abstain(pick.choice):
+        return _abstain_verdict(options, fits, pick.confidence), None
+    verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, list(options))
     if not verdict.ok:
         return verdict, None
-    command = CommandVariant(command=command_for(elements[verdict.choice]), rationale=f"{chosen_label_for(verdict.choice)} per the goal")
+    command = CommandVariant(command=command_for(options[verdict.choice]), rationale=f"{chosen_label_for(verdict.choice)} per the goal")
     safe_by_candidate = {c: answers[key].noul for key, c in safe_keys.items()}
     return verdict, finalize_gate(command, safe_by_candidate[verdict.choice], call_id=call_id)
 
@@ -171,34 +183,40 @@ async def _propose_gesture(
     if verbose:
         print(f"{len(elements)} real matching elements on screen")
 
+    profile = current_profile(jev.engine_name)
+    # The option map the judge answers over: short raw labels where the profile
+    # asks for them, the full labels otherwise. Everything downstream (cache,
+    # coordinates, gate evidence) keys off this map, so the judge's answer
+    # always resolves straight back to the real element.
+    options = short_options(elements) if profile.short_labels else elements
     cache_key = (foreground_package(dump_xml), goal)
     gate_result: GateResult | None = None
 
     async def _narrow() -> NarrowVerdict:
         nonlocal gate_result
-        if elements and len(elements) <= CHUNK_SIZE:
+        if options and len(options) <= profile.chunk_size:
             verdict, gate_result = await _fused_pick_and_gate(
-                jev, goal, elements,
+                jev, goal, options,
                 pick_instructions=pick_instructions, fit_instructions=fit_instructions,
                 safe_instructions=safe_instructions, command_for=command_for, chosen_label_for=chosen_label_for,
             )
             if verbose:
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
         else:
-            verdict = await narrow_and_pick(jev, goal, list(elements), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: elements[c].description or c)
+            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c)
             if verbose:
                 print(f"shortlist: {verdict.shortlist}")
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
         return verdict
 
-    verdict = await _cached_or_narrow(cache_key, elements, _narrow, verbose=verbose)
+    verdict = await _cached_or_narrow(cache_key, options, _narrow, verbose=verbose)
 
     if not verdict.ok:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(verdict.reasons)}")
         return TapProposal(None, verdict.confidence, verdict.fit, reasons=tuple(verdict.reasons))
 
-    target = elements[verdict.choice]
+    target = options[verdict.choice]
     chosen_label = chosen_label_for(verdict.choice)
     command = CommandVariant(command=command_for(target), rationale=f"{chosen_label} per the goal")
     if gate_result is None:
@@ -220,8 +238,8 @@ async def propose_tap(
     """Narrow real on-screen elements + gate the resulting tap. No execution. `fit_instructions`
     defaults to a single-step framing ("actually perform the goal") -- a multi-step caller (see
     experiment/action_chain.py) can override it to ask about progress instead, since no single
-    tap performs a whole multi-clause goal (confirmed live: fit 0.18 on a correctly-labeled
-    real button, using the default wording, when the goal described several remaining steps)."""
+    tap performs a whole multi-clause goal (the default wording scores a correctly-labeled real
+    button low when the goal describes several remaining steps)."""
     return await _propose_gesture(
         jev, transport, goal,
         parse_elements=parse_actionable_elements,
@@ -320,11 +338,12 @@ async def scroll_to_find(
     propose_swipe/execute_swipe (one real gesture) instead of paging a fixed number of times."""
     for attempt in range(1, max_attempts + 1):
         elements = parse_all_elements(await dump_screen(transport))
+        options = short_options(elements) if current_profile(jev.engine_name).short_labels else elements
         verdict = await narrow_and_pick(
-            jev, goal, list(elements),
+            jev, goal, list(options),
             instructions="Which real on-screen item is the target this goal is scrolling to find?",
             fit_instructions="Is {candidate} really the target this goal describes?",
-            describe=lambda c, elements=elements: elements[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
+            describe=lambda c, options=options: options[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
         )
         if verbose:
             print(f"attempt {attempt}/{max_attempts}: picked {verdict.choice!r} ok={verdict.ok}")
@@ -352,7 +371,7 @@ async def _verify_after_action(
         # A fixed-length raw-XML truncation can cut off the real evidence entirely (confirmed
         # live); compact per-element labels carry far more real signal per character.
         truncation: dict = {}
-        screen_after = describe_screen(await dump_screen(transport), goal=goal, telemetry=truncation)
+        screen_after = describe_screen(await dump_screen(transport), goal=goal, limit=current_profile(jev.engine_name).screen_limit, telemetry=truncation)
         answers = await jev.ask(
             {"goal": goal, "acted_on": acted_on, "screen_after": screen_after},
             {"satisfied": Noul(instructions="screen_after lists every real element currently on "
@@ -424,10 +443,11 @@ def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
 async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | None:
     if not spans:
         return None
+    profile = current_profile(jev.engine_name)
     return await jev.ask(
         {"goal": goal, "candidate_values": spans},
         {
-            "value": Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans}),
+            "value": Choice(instructions="Which of these is the text to type for this goal?", criteria=choice_criteria({s: None for s in spans}, profile)),
             "any_fit": Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?"),
         },
         phase="fill",
@@ -435,29 +455,35 @@ async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | Non
 
 
 async def _fused_field_and_value(
-    jev: JevClient, goal: str, elements: dict[str, Element], spans: list[str], fit_instructions: str,
+    jev: JevClient, goal: str, options: dict[str, Element], spans: list[str], fit_instructions: str,
 ) -> tuple[NarrowVerdict, dict | None]:
     """Batches field-narrow with value-pick into one real request on a cache miss -- they're
     independent facts that previously cost two separate round trips (asyncio.gather only
-    overlaps wall-clock time, it doesn't merge the payloads)."""
-    labels = list(elements)
-    field_criteria = {c: None for c in labels}
+    overlaps wall-clock time, it doesn't merge the payloads). `options` is the judge's
+    option map (short labels on profiles with short_labels, full labels otherwise)."""
+    profile = current_profile(jev.engine_name)
+    if profile.descriptions_in_state:
+        field_criteria = {c: (element.description or None) for c, element in options.items()}
+    else:
+        field_criteria = {c: None for c in options}
     state = {"goal": goal, "candidates": field_criteria}
     questions = {
-        "pick": Choice(instructions="Which on-screen field should receive text for this goal?", criteria=field_criteria),
-        **fit_questions(labels, fit_instructions, lambda c: elements[c].description or c),
+        "pick": Choice(instructions="Which on-screen field should receive text for this goal?", criteria=choice_criteria(field_criteria, profile)),
+        **fit_questions(options, fit_instructions, lambda c: options[c].description or c),
     }
     if spans:
         state["candidate_values"] = spans
-        questions["value"] = Choice(instructions="Which of these is the text to type for this goal?", criteria={s: None for s in spans})
+        questions["value"] = Choice(instructions="Which of these is the text to type for this goal?", criteria=choice_criteria({s: None for s in spans}, profile))
         questions["any_fit_value"] = Noul(instructions="Given candidate_values, does any of them belong in a text field for this goal?")
     answers = await jev.ask(state, questions, phase="fill")
     pick = answers["pick"]
-    fits = extract_fits(answers, labels)
+    fits = extract_fits(answers, options)
+    if is_abstain(pick.choice):
+        return _abstain_verdict(options, fits, pick.confidence), None
     # A field's label embeds its live text, so it reads as a new candidate once typed into --
     # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
-    loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(elements) <= 3 else {}
-    field_verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, labels, **loose)
+    loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(options) <= 3 else {}
+    field_verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, list(options), **loose)
     value_answers = {"value": answers["value"], "any_fit": answers["any_fit_value"]} if spans else None
     return field_verdict, value_answers
 
@@ -476,16 +502,18 @@ async def propose_type(
     if not elements:
         return TypeProposal(None, None, 0.0, reasons=_no_editable_field_reasons(dump_xml, goal))
 
+    profile = current_profile(jev.engine_name)
+    options = short_options(elements) if profile.short_labels else elements
     spans = extract_value_spans(goal)
     cache_key = (foreground_package(dump_xml), goal)
     cached = _ELEMENT_CACHE.get(cache_key)
-    if cached in elements:
+    if cached in options:
         if verbose:
             print(f"cache hit: {cached!r} still on screen, skipping Jev narrowing")
         field_verdict = NarrowVerdict(cached, 1.0, 1.0, 1.0, [cached])
         answers = await _pick_value(jev, goal, spans)
     else:
-        field_verdict, answers = await _fused_field_and_value(jev, goal, elements, spans, fit_instructions)
+        field_verdict, answers = await _fused_field_and_value(jev, goal, options, spans, fit_instructions)
         if field_verdict.ok:
             _ELEMENT_CACHE[cache_key] = field_verdict.choice
     if verbose:
@@ -501,9 +529,11 @@ async def propose_type(
         print(f"value picked: {answers['value'].choice!r} (any_fit {answers['any_fit'].noul:.2f})")
     if answers["any_fit"].noul < 0.5:
         return TypeProposal(field_verdict.choice, None, field_verdict.confidence, reasons=("no candidate value fits a text field for this goal",))
+    if is_abstain(answers["value"].choice):
+        return TypeProposal(field_verdict.choice, None, field_verdict.confidence, reasons=("judge abstained: picked none_of_these for the value to type",))
     value = answers["value"].choice
 
-    target = elements[field_verdict.choice]
+    target = options[field_verdict.choice]
     # Fixed generous count is safer than len(target.text) (real content can outrun displayed
     # text). One `input keyevent` call takes many keycodes -- avoids 200 separate process spawns.
     clear = f"input keyevent 123{' 67' * 200} && " if target.text else ""

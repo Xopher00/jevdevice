@@ -1,21 +1,21 @@
 """Laya backend: the Jev ask() contract answered in-process by one pinned
-checkpoint (Phase 2 mechanical swap; selected by JEV_ENGINE=laya).
+checkpoint (selected by JEV_ENGINE=laya).
 
 Identical shape to JevClient: typed questions in, typed calibrated answers
 out, decision rows journaled exactly the same way (engine="laya"), the same
 UsageLedger accounting. Differences from the Jev path, all deliberate:
 
-- No HTTP: judge calls are local (~65 ms warm GPU on this machine, P0 F2c),
-  so there is nothing to retry and aclose() is a no-op.
+- No HTTP: judge calls are local (~65 ms warm), so there is nothing to retry
+  and aclose() is a no-op.
 - The checkpoint is pinned to ONE HF revision (REVISION below): gate
   thresholds are calibrated against exactly that checkpoint's probability
-  shape (P0 fact sheet), and P4's recalibration + P6's fine-tune must both
-  anchor to a single, nameable artifact.
-- Construction form is laya's real API (P0 F1a drift): Router(preload=True,
-  model=...) does not exist. Router() + .load("typed-decisions") is the
-  verified form; NEVER Router(preload=["typed-decisions"]) -- __init__ calls
-  self.preload() bare and loads ALL THREE checkpoints (~1.16B params), which
-  OOMs a 4 GiB GPU into silent CPU fallback.
+  shape, and recalibration and any fine-tune must both anchor to a single,
+  nameable artifact.
+- Construction form is laya's real API: Router(preload=True, model=...) does
+  not exist. Router() + .load("typed-decisions") is the verified form; NEVER
+  Router(preload=["typed-decisions"]) -- __init__ calls self.preload() bare
+  and loads ALL THREE checkpoints (~1.16B params), which OOMs a 4 GiB GPU
+  into silent CPU fallback.
 
 Revision pinning is done here, not by laya: laya's own snapshot_download call
 takes no revision argument, so this module resolves the exact commit itself
@@ -34,20 +34,21 @@ from .ledger import EngineInfo, Usage, UsageLedger
 
 REPO = "convaiinnovations/laya"  # bundled repo; typed-decisions is a subfolder
 MODEL = "typed-decisions"
-# The snapshot commit that was on disk and answering during Phase 0's live
-# fact-check (P0 F1c). Calibration ties to this artifact; bumping it invalidates
-# every fitted threshold until P4 reruns.
+# The snapshot commit that was on disk and answering when the engine facts were
+# first verified. Calibration ties to this artifact; bumping it invalidates
+# every fitted threshold until recalibration reruns.
 REVISION = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
 
 
 class LayaClient(JevClient):
     """Duck-type twin of JevClient: identical ask() signature and journal
     emission (inherited _emit_decision_row), no network client. The checkpoint
-    loads lazily on the first ask() (cold load ~33 s from the HF cache, P0)
-    inside a worker thread so the event loop never blocks. Concurrent asks
-    serialize on one lock: laya's Agent is not documented as thread-safe, and
-    one forward pass is shorter than any retry would be. (P5's shadow mode
-    wants real concurrency -- revisit there with an explicit knob.)"""
+    loads lazily on the first ask() (once per process -- a resident load, not
+    a per-call cost; the snapshot itself resolves from the local HF cache
+    offline) inside a worker thread so the event loop never blocks. Concurrent
+    asks serialize on one lock: laya's Agent is not documented as thread-safe,
+    and one forward pass is shorter than any retry would be. Real concurrent
+    asks (e.g. a shadow-mode second engine) want an explicit knob first."""
 
     def __init__(
         self, *, journal: decision_log.DecisionJournal | None = None,
@@ -67,23 +68,30 @@ class LayaClient(JevClient):
 
     async def aclose(self) -> None:
         """Nothing to release: no network client; the checkpoint stays resident
-        for the process lifetime (an unload knob is P5's call if ever needed)."""
+        for the process lifetime (an unload knob, if ever needed, would live here)."""
 
     def _build_router(self):
         """laya imports here, not at module top: the jev path must not pay the
         torch import on every startup (mcp_server imports this module via
         common.bootstrap)."""
         from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
         from laya import Router
         from laya.agent import Agent
 
-        # Pin the revision ourselves (laya's snapshot_download call takes no
-        # revision kwarg), then let Agent build from the local directory.
-        location = snapshot_download(REPO, revision=REVISION, allow_patterns=[f"{MODEL}/*"])
+        # Offline-first: the revision is pinned, so once the snapshot is in the
+        # local HF cache every later load resolves from disk -- no network
+        # round trip, no re-download check, on every process start.
+        try:
+            location = snapshot_download(REPO, revision=REVISION, allow_patterns=[f"{MODEL}/*"], local_files_only=True)
+        except LocalEntryNotFoundError:
+            # First run on this machine (or the cache was pruned): fetch the
+            # pinned revision once, after which loads stay offline.
+            location = snapshot_download(REPO, revision=REVISION, allow_patterns=[f"{MODEL}/*"])
         agent = Agent(location, subfolder=MODEL, device=self._device)
         router = Router()
         # attach, NOT Router(preload=[...]) -- that form loads all three
-        # checkpoints and OOMs a 4 GiB GPU into silent CPU fallback (P0 F1a).
+        # checkpoints and OOMs a 4 GiB GPU into silent CPU fallback.
         router.attach(MODEL, agent)
         return router
 
@@ -102,7 +110,7 @@ class LayaClient(JevClient):
         """Same contract as JevClient.ask: identical question serialization
         (the frozen wire shape), typed answers out, a decision row per call.
         Budget overflow -- laya raises ValueError when cfg max_len cuts below
-        the option block (P0 T2.7) -- surfaces as JevError like every other
+        the option block -- surfaces as JevError like every other
         engine failure; the message may blame head_max_len even when max_len
         was the trigger, so catch the type, never parse the text."""
         if not questions:

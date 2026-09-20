@@ -1,4 +1,4 @@
-"""Phase 1 decision journal: replay semantics, wire-shape freeze proof, call-site
+"""Decision journal: replay semantics, wire-shape freeze proof, call-site
 labels, outcome-row helpers, truncation telemetry, rotation + writer cost."""
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _client_with(http_payload: dict, journal) -> tuple[JevClient, _FakeHTTP]:
     return client, fake
 
 
-# --- T1: rows write and replay ---------------------------------------------
+# --- rows write and replay ---------------------------------------------------
 
 def _decision_row(journal: DecisionJournal, big: str) -> None:
     journal.record_decision(
@@ -164,7 +164,7 @@ def test_goal_scope_sets_stable_id_and_text() -> None:
     assert decision_log.current_goal() == (None, None)
 
 
-# --- T2: ask() emits decision rows, wire body unchanged ---------------------
+# --- ask() emits decision rows, wire body unchanged -------------------------
 
 _PAYLOAD = {"answers": {"q1": {"type": "noul", "noul": 0.9}}, "usage": {"input_tokens": 10, "output_tokens": 2}}
 
@@ -189,7 +189,7 @@ async def test_ask_emits_a_replayable_decision_row() -> None:
 
 
 async def test_ask_wire_body_stays_exactly_the_frozen_shape() -> None:
-    """The Phase 1 wire proof: journaling metadata must never reach the engine."""
+    """The wire proof: journaling metadata must never reach the engine."""
     recorder = RecordingJournal()
     client, fake = _client_with(_PAYLOAD, recorder)
     with goal_scope("open the calculator"):
@@ -236,7 +236,7 @@ async def test_call_id_is_generated_once_per_ask_when_not_supplied() -> None:
     assert first != second
 
 
-# --- T3: every ask() call site carries a phase label ------------------------
+# --- every ask() call site carries a phase label -----------------------------
 
 def test_every_ask_call_site_carries_a_phase_label() -> None:
     """Static guard over src/jevdevice/*.py (calibrate/ CLIs excluded): any
@@ -260,7 +260,7 @@ def test_every_ask_call_site_carries_a_phase_label() -> None:
     assert not offenders, f"ask() call sites missing phase= label: {offenders}"
 
 
-# --- T4: outcome-row helpers -------------------------------------------------
+# --- outcome-row helpers -----------------------------------------------------
 
 def test_pending_action_carries_the_gate_call_id() -> None:
     from jevdevice import mcp_server
@@ -305,7 +305,7 @@ def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None
     assert row["device"] == mcp_server.transport.serial
 
 
-# --- T5: truncation telemetry ------------------------------------------------
+# --- truncation telemetry ----------------------------------------------------
 
 def test_describe_screen_telemetry_records_what_was_cut() -> None:
     from jevdevice.elements import describe_screen
@@ -329,12 +329,11 @@ def test_describe_screen_without_telemetry_dict_is_unchanged() -> None:
     assert describe_screen(dump_xml) == ["text='Send'"]  # existing callers unaffected
 
 
-# --- T6: writer cost ----------------------------------------------------------
+# --- writer cost --------------------------------------------------------------
 
 def test_writer_adds_under_a_millisecond_per_row(tmp_path: Path) -> None:
-    """The hot-loop budget (Phase 1 T6): synchronous append must stay cheap.
-    Measured number recorded in LOGBOOK.md; generous bound here so a cold
-    filesystem doesn't flake the suite."""
+    """The hot-loop budget: synchronous append must stay cheap. The bound is
+    generous so a cold filesystem doesn't flake the suite."""
     journal = DecisionJournal(tmp_path)
     row_kwargs = {
         "engine": "jev", "model_revision": "jev-1.13.0", "phase": "verify",

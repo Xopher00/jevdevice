@@ -8,6 +8,8 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
+from .budget import JEV_PROFILE
+
 VALUE_PREPOSITIONS = ("for", "to", "into", "with", "and")
 
 
@@ -18,9 +20,9 @@ def extract_value_spans(goal: str) -> list[str]:
     pre_parsed_value_extraction_cookbook.md). Quoted spans, plus the trailing
     clause after an ordinary English preposition -- grammatical function words,
     not per-goal templates -- so this generalizes across any goal phrasing.
-    A comma ends a clause early (confirmed live: a goal naming several values,
-    "to X, with Y, and Z", was swallowing all three into one span without this --
-    a period doesn't, since one can be part of the value itself, e.g. an email)."""
+    A comma ends a clause early: a goal naming several values, "to X, with Y, and Z",
+    otherwise swallows all three into one span -- a period doesn't, since one can be part
+    of the value itself (e.g. an email)."""
     spans: list[str] = []
     for match in re.finditer(r"['\"]([^'\"]+)['\"]", goal):
         spans.append(match.group(1))
@@ -70,10 +72,12 @@ def ground_candidates(proposed: Iterable[str], enumerated: Sequence[str]) -> tup
     return grounded, ungrounded
 
 
-def chunk_candidates(candidates: Sequence[str], query: str, chunk_size: int = 200) -> list[list[str]]:
+def chunk_candidates(candidates: Sequence[str], query: str, chunk_size: int | None = None) -> list[list[str]]:
     """Split into <=chunk_size groups, ordered by fuzzy_narrow so the most
     plausible chunk comes first, but every candidate lands in exactly one
-    chunk — ordering only, nothing is ever dropped."""
+    chunk — ordering only, nothing is ever dropped. The bound is a named knob:
+    the calling engine's profile chunk_size, never a bare int at a call site."""
+    chunk_size = JEV_PROFILE.chunk_size if chunk_size is None else chunk_size
     ordered = fuzzy_narrow(query, list(candidates), limit=len(candidates))
     return [ordered[i:i + chunk_size] for i in range(0, len(ordered), chunk_size)] or [[]]
 

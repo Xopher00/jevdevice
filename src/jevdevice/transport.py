@@ -71,9 +71,9 @@ class AdbTransport:
         return self._u2
 
     async def dump_hierarchy(self) -> str:
-        """A real uiautomator2 companion server sideloaded once and kept resident on-device
-        answers this in ~0.2-0.3s; a fresh `uiautomator dump` process cold-starts in ~2.2s
-        every call (confirmed live) because it reloads the ART runtime each time."""
+        """A resident uiautomator2 companion server answers in ~0.2-0.3s; a fresh
+        `uiautomator dump` process cold-starts in ~2.2s every call because it
+        reloads the ART runtime each time."""
         return await asyncio.to_thread(self._u2_device().dump_hierarchy)
 
     async def window_size(self) -> tuple[int, int]:

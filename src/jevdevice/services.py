@@ -10,6 +10,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 
+from .budget import choice_criteria, current_profile, is_abstain
 from .common import gated
 from .gate import (
     ClosedSetProposal,
@@ -27,7 +28,7 @@ from .transport import AdbTransport
 # svc's controllable services are a small, genuinely fixed set (not app-specific).
 TOGGLEABLE_SERVICES = {"bluetooth": None, "nfc": None, "data": None}
 
-# Real KEYCODE_* names -- `input keyevent` accepts these directly (confirmed live),
+# Real KEYCODE_* names -- `input keyevent` accepts these directly,
 # no hand-maintained number table needed. POWER excluded: can lock/reboot the device.
 KEY_EVENTS = (
     "HOME", "BACK", "APP_SWITCH", "ENTER",
@@ -100,11 +101,12 @@ class ToggleProposal:
 async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> ToggleProposal:
     if verbose:
         print("--- step 2: Jev fills the two closed-set arguments (batched) ---")
+    profile = current_profile(jev.engine_name)
     answers = await jev.ask(
         {"goal": goal, "radio_options": TOGGLEABLE_SERVICES},
         {
-            "service": Choice(instructions="Which service does the goal refer to?", criteria=TOGGLEABLE_SERVICES),
-            "enabled": Choice(instructions="Does the goal want it turned on or off?", criteria={"on": None, "off": None}),
+            "service": Choice(instructions="Which service does the goal refer to?", criteria=choice_criteria(TOGGLEABLE_SERVICES, profile)),
+            "enabled": Choice(instructions="Does the goal want it turned on or off?", criteria=choice_criteria({"on": None, "off": None}, profile)),
             "names_one": Noul(instructions="Given radio_options, does the goal specifically ask about one of them?"),
         },
         phase="fill",
@@ -116,6 +118,8 @@ async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, 
         print(f"names_one: {answers['names_one'].noul:.2f}\n")
     if answers["names_one"].noul < 0.5:
         return ToggleProposal(None, None, reasons=(f"goal doesn't name one of {', '.join(TOGGLEABLE_SERVICES)}",))
+    if is_abstain(service_pick.choice) or is_abstain(enabled_pick.choice):
+        return ToggleProposal(None, None, reasons=("judge abstained: picked none_of_these for the service or its direction",))
     service, enabled = gated(service_pick), gated(enabled_pick)
     if service is None or enabled is None:
         return ToggleProposal(service, enabled, reasons=("confidence gate rejected service or enabled pick",))
@@ -169,8 +173,10 @@ async def execute_toggle(
     if verbose:
         print("--- step 6: real check + Jev verify ---")
     check = await transport.run(f"dumpsys {check_service}")
+    # The raw status text rides in state under the answering engine's profile
+    # budget -- the clip is a named knob (budget.py), never a bare int.
     verify = await jev.ask(
-        {"goal": goal, "service_state": check.stdout[:2000]},
+        {"goal": goal, "service_state": check.stdout[:current_profile(jev.engine_name).probe_max_chars]},
         {"satisfied": Noul(instructions="Given service_state, is the goal now achieved?")},
         phase="verify",
     )

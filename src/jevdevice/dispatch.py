@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from .app_launch import launch_app_for_goal
+from .budget import choice_criteria, current_profile, is_abstain
 from .common import bootstrap, gated
 from .decision_log import goal_scope
 from .elements import dump_screen, screen_summary
@@ -69,8 +70,8 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
     """Which ONE atomic action kind this goal is asking for -- the calling agent
     (human at the CLI, or an LLM composing MCP tool calls) decides sequencing;
     this only ever resolves a single goal to a single kind. `transport`, when given,
-    grounds the pick in what's really on screen (confirmed live: without it, an
-    ambiguous goal like "search for X" can't be told apart from "open an app named X")."""
+    grounds the pick in what's really on screen -- without it, an ambiguous goal like
+    "search for X" can't be told apart from "open an app named X"."""
     if verbose:
         print("--- Jev picks the action kind (real Choice over ACTION_KINDS) ---")
     state: dict = {"goal": goal, "action_options": ACTION_KINDS}
@@ -79,8 +80,8 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
     if transport is not None:
         try:
             summary = screen_summary(await dump_screen(transport), goal=goal, telemetry=truncation)
-            # on_screen's full label list measurably dilutes confidence even on an unrelated
-            # goal (confirmed live: 1.00 -> 0.47-0.69) -- not worth it for kind selection.
+            # on_screen's full label list dilutes confidence even on an unrelated
+            # goal -- not worth it for kind selection.
             state["screen"] = {"foreground_package": summary["foreground_package"], "editable_fields": summary["editable_fields"]}
             kind_instructions += (
                 " screen describes the real device right now: screen.editable_fields lists "
@@ -94,7 +95,7 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
     answers = await jev.ask(
         state,
         {
-            "kind": Choice(instructions=kind_instructions, criteria=ACTION_KINDS),
+            "kind": Choice(instructions=kind_instructions, criteria=choice_criteria(ACTION_KINDS, current_profile(jev.engine_name))),
             "any_fit": Noul(instructions="Given action_options, does any of them fit this goal?"),
         },
         phase="kind", call_id=call_id, truncation=truncation,
@@ -102,6 +103,8 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
     kind_pick = answers["kind"]
     if verbose:
         print(f"picked kind: {kind_pick.choice} (confidence {kind_pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})\n")
+    if is_abstain(kind_pick.choice):
+        return KindPick(None, kind_pick.confidence, ("judge abstained: picked none_of_these, so no action kind fits this goal",), call_id=call_id)
     if answers["any_fit"].noul < 0.5:
         return KindPick(None, kind_pick.confidence, (f"none of the {len(ACTION_KINDS)} action kinds fit this goal",), call_id=call_id)
     kind = gated(kind_pick)
