@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
+from .budget import current_profile
 from .elements import dump_screen, foreground_package
 from .jev import JevClient, Noul
 from .narrowing import narrow_and_pick
@@ -36,7 +37,7 @@ async def verify_with_retry(
             phase="verify",
         )
         satisfied = answers["satisfied"].noul
-        if satisfied >= 0.5:
+        if satisfied >= current_profile(jev.engine_name).noul_floor:
             return True, satisfied, attempt, observed or ""
     return False, satisfied, len(delays), observed or ""
 

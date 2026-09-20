@@ -11,6 +11,8 @@ from .budget import (  # engine names live in budget.py
     ENGINE_ENV,
     ENGINES,
     JEV_ENGINE_NAME,
+    BudgetProfile,
+    current_profile,
 )
 from .jev import JevClient
 from .laya_backend import LayaClient
@@ -84,9 +86,12 @@ def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbT
     return client, AdbTransport(serial)
 
 
-def gated(pick, escalate_prefix: str = "=== ESCALATED ===") -> str | None:
-    """Apply the fixed no-action-below-threshold policy to one Jev Choice pick."""
-    ok, reason = confidence_gate(pick.probabilities, pick.confidence)
+def gated(pick, escalate_prefix: str = "=== ESCALATED ===", *, profile: BudgetProfile | None = None) -> str | None:
+    """Apply the fixed no-action-below-threshold policy to one Jev Choice pick.
+    The thresholds are the answering engine's profile knobs (budget.py); with
+    no profile the process engine's (JEV_ENGINE) values apply."""
+    profile = profile or current_profile()
+    ok, reason = confidence_gate(pick.probabilities, pick.confidence, profile.min_confidence, profile.min_margin)
     if not ok:
         print(f"{escalate_prefix} {reason}")
         return None

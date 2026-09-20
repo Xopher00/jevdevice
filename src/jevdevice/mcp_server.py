@@ -21,6 +21,7 @@ from mcp.server.fastmcp.utilities.types import Image
 
 from . import decision_log
 from .app_launch import LaunchOutcome, launch_app_for_goal
+from .budget import current_profile
 from .common import bootstrap
 from .decision_log import ESCALATED, FAILED, NONE, VERIFIED, goal_scope
 from .dispatch import KIND_TABLE, pick_kind
@@ -129,7 +130,7 @@ async def _foreground_safe() -> str | None:
 def _toggle_response(outcome: ToggleOutcome) -> dict:
     return {
         # Weakest-link status: a clean resolve with a low post-verify `satisfied` still isn't "ok".
-        "status": "ok" if not outcome.reasons and outcome.satisfied >= 0.5 else "unverified",
+        "status": "ok" if not outcome.reasons and outcome.satisfied >= current_profile(jev.engine_name).noul_floor else "unverified",
         "exit_code": outcome.exit_code,
         "check_service": outcome.check_service,
         "satisfied": outcome.satisfied,
@@ -139,7 +140,7 @@ def _toggle_response(outcome: ToggleOutcome) -> dict:
 
 def _tap_response(outcome: ActionOutcome) -> dict:
     return {
-        "status": "ok" if outcome.tapped and outcome.satisfied >= 0.5 else "unverified",
+        "status": "ok" if outcome.tapped and outcome.satisfied >= current_profile(jev.engine_name).noul_floor else "unverified",
         "element": outcome.element,
         "satisfied": outcome.satisfied,
         "reasons": list(outcome.reasons),

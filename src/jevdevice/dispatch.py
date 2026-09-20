@@ -105,9 +105,10 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
         print(f"picked kind: {kind_pick.choice} (confidence {kind_pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})\n")
     if is_abstain(kind_pick.choice):
         return KindPick(None, kind_pick.confidence, ("judge abstained: picked none_of_these, so no action kind fits this goal",), call_id=call_id)
-    if answers["any_fit"].noul < 0.5:
+    profile = current_profile(jev.engine_name)
+    if answers["any_fit"].noul < profile.noul_floor:
         return KindPick(None, kind_pick.confidence, (f"none of the {len(ACTION_KINDS)} action kinds fit this goal",), call_id=call_id)
-    kind = gated(kind_pick)
+    kind = gated(kind_pick, profile=profile)
     if kind is None:
         return KindPick(None, kind_pick.confidence, ("confidence gate rejected the action-kind pick",), call_id=call_id)
     return KindPick(kind, kind_pick.confidence, call_id=call_id)

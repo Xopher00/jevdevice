@@ -156,8 +156,9 @@ async def _pick_and_decide(
 async def narrow_and_pick(
     jev: JevClient, query: str, candidates: list[str], *, instructions: str, fit_instructions: str,
     evidence_for: Callable[[list[str]], Awaitable[dict[str, str]]] | None = None,
-    chunk_size: int | None = None, k: int | None = None, min_fit: float = 0.5, min_confidence: float = 0.6,
-    min_margin: float = 0.15, state_extra: dict | None = None, accept_any_fitting: bool = False,
+    chunk_size: int | None = None, k: int | None = None, min_fit: float | None = None,
+    min_confidence: float | None = None,
+    min_margin: float | None = None, state_extra: dict | None = None, accept_any_fitting: bool = False,
     describe: Callable[[str], str] = lambda c: c,
 ) -> NarrowVerdict:
     """Rounds 1+2+decide: the one function real call sites use.
@@ -173,6 +174,11 @@ async def narrow_and_pick(
     runs only when that pick abstains or fails its gates. The hosted engine's
     profile keeps the 2-round chunked sweep unchanged."""
     profile = current_profile(jev.engine_name)
+    # Gate thresholds are the answering engine's profile knobs (budget.py); an
+    # explicit argument still wins for callers that need their own bar.
+    min_fit = profile.min_fit if min_fit is None else min_fit
+    min_confidence = profile.min_confidence if min_confidence is None else min_confidence
+    min_margin = profile.min_margin if min_margin is None else min_margin
     chunk_size = profile.chunk_size if chunk_size is None else chunk_size
     k = BEAM_K if k is None else k
     if len(candidates) <= chunk_size:

@@ -4,6 +4,9 @@ touches the network or a device."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+from unittest.mock import patch
+
 from jevdevice.budget import (
     JEV_PROFILE,
     LAYA_PROFILE,
@@ -243,3 +246,34 @@ def test_short_label_prefers_text_over_resource_id() -> None:
     )
     options = short_options(parse_actionable_elements(dump_xml))
     assert list(options) == ["Search"]
+
+# --- phase 4 calibration knobs ------------------------------------------------
+
+def test_calibration_knobs_jev_keeps_the_historical_values() -> None:
+    assert JEV_PROFILE.gate_threshold == 0.8
+    assert JEV_PROFILE.min_confidence == 0.6
+    assert JEV_PROFILE.min_margin == 0.15
+    assert JEV_PROFILE.min_fit == 0.5
+    assert JEV_PROFILE.noul_floor == 0.5
+    assert JEV_PROFILE.temp_choice is None  # not fitted
+
+
+def test_calibration_knobs_carry_labeled_sample_provenance() -> None:
+    # Every fitted temperature records how many labels it rests on; an
+    # unfitted type is None and absent from the provenance map.
+    for profile in (JEV_PROFILE, LAYA_PROFILE):
+        for temp_name in ("temp_choice", "temp_noul", "temp_score"):
+            temp = getattr(profile, temp_name)
+            if temp is None:
+                continue
+            assert profile.calibration_n.get(temp_name.removeprefix("temp_"), 0) > 0
+
+
+async def test_narrow_and_pick_thresholds_come_from_the_answering_engine_profile() -> None:
+    laya_like = replace(JEV_PROFILE, engine="laya", min_fit=0.2, min_confidence=0.3, min_margin=0.05, shortlist_first=False)
+    with patch("jevdevice.narrowing.current_profile", return_value=laya_like):
+        judge = FakeJudge("laya", [_round2_payload("gm", 1, confidence=0.35, fit=0.25)])
+        verdict = await narrow_and_pick(judge, "open gmail", ["gm"],
+                                        instructions="Which package best satisfies the goal?",
+                                        fit_instructions="Is {candidate} the app the goal asks to open?")
+    assert verdict.ok  # 0.35 >= 0.3 confidence, fit 0.25 >= 0.2: profile knobs applied

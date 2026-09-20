@@ -146,12 +146,13 @@ async def _fused_pick_and_gate(
     fits = extract_fits(answers, options)
     if is_abstain(pick.choice):
         return _abstain_verdict(options, fits, pick.confidence), None
-    verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, list(options))
+    verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, list(options),
+                     min_fit=profile.min_fit, min_confidence=profile.min_confidence, min_margin=profile.min_margin)
     if not verdict.ok:
         return verdict, None
     command = CommandVariant(command=command_for(options[verdict.choice]), rationale=f"{chosen_label_for(verdict.choice)} per the goal")
     safe_by_candidate = {c: answers[key].noul for key, c in safe_keys.items()}
-    return verdict, finalize_gate(command, safe_by_candidate[verdict.choice], call_id=call_id)
+    return verdict, finalize_gate(command, safe_by_candidate[verdict.choice], profile.gate_threshold, call_id=call_id)
 
 
 async def _cached_or_narrow(
@@ -381,7 +382,7 @@ async def _verify_after_action(
             phase="verify", truncation=truncation,
         )
         satisfied = answers["satisfied"].noul
-        if satisfied >= 0.5:
+        if satisfied >= current_profile(jev.engine_name).noul_floor:
             break
     if verbose:
         print(f"goal met: {satisfied >= 0.5} (noul={satisfied:.2f})")
@@ -482,7 +483,8 @@ async def _fused_field_and_value(
         return _abstain_verdict(options, fits, pick.confidence), None
     # A field's label embeds its live text, so it reads as a new candidate once typed into --
     # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
-    loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(options) <= 3 else {}
+    loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(options) <= 3 else {
+        "min_fit": profile.min_fit, "min_confidence": profile.min_confidence, "min_margin": profile.min_margin}
     field_verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, list(options), **loose)
     value_answers = {"value": answers["value"], "any_fit": answers["any_fit_value"]} if spans else None
     return field_verdict, value_answers
@@ -527,7 +529,7 @@ async def propose_type(
         return TypeProposal(field_verdict.choice, None, field_verdict.confidence, reasons=("no candidate text value found in the goal",))
     if verbose:
         print(f"value picked: {answers['value'].choice!r} (any_fit {answers['any_fit'].noul:.2f})")
-    if answers["any_fit"].noul < 0.5:
+    if answers["any_fit"].noul < profile.noul_floor:
         return TypeProposal(field_verdict.choice, None, field_verdict.confidence, reasons=("no candidate value fits a text field for this goal",))
     if is_abstain(answers["value"].choice):
         return TypeProposal(field_verdict.choice, None, field_verdict.confidence, reasons=("judge abstained: picked none_of_these for the value to type",))

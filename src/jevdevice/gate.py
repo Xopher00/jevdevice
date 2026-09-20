@@ -161,7 +161,7 @@ def confirm_with_human(command: CommandVariant, chosen_label: str, noul_confiden
 
 
 async def gate_command(
-    jev: JevClient, command: CommandVariant, chosen_label: str, threshold: float = 0.8,
+    jev: JevClient, command: CommandVariant, chosen_label: str, threshold: float | None = None,
     evidence: dict | None = None, instructions: str = DEFAULT_SAFE_INSTRUCTIONS,
     *, call_id: str | None = None,
 ) -> GateResult:
@@ -169,11 +169,15 @@ async def gate_command(
     tapped element's actual on-screen bounds) -- something the model can check
     itself, not another description it has to take on faith like `rationale`.
     `instructions` defaults to the toggle-command wording; a different command
-    shape (e.g. a tap) needs its own calibrated wording, not this one reused."""
+    shape (e.g. a tap) needs its own calibrated wording, not this one reused.
+    `threshold` defaults to the answering engine's profile knob (budget.py):
+    each engine's noul scale is its own, so the approval floor travels with it."""
     if is_read_only(command.command):
         return GateResult(verdict=GateVerdict.APPROVED, reason="read_only")
     if is_denied(command.command):
         return GateResult(verdict=GateVerdict.DENIED, reason="deny_listed")
+    profile = current_profile(jev.engine_name)
+    threshold = profile.gate_threshold if threshold is None else threshold
 
     # The call_id is generated HERE (not inside ask()) so it can travel onto the
     # GateResult -> Pending -> PendingAction -> outcome row and join the two rows.
@@ -193,6 +197,8 @@ def finalize_gate(
     """Applies the same deny-list + threshold rule gate_command does, but takes an
     already-computed confidence -- for callers that got it speculatively (e.g. asked
     alongside a narrowing pick in one batched request) instead of via their own ask.
+    Callers with a client pass the answering engine's profile.gate_threshold
+    (gate_command resolves it that way); the bare default stays the jev-era 0.8.
     `call_id` joins the verdict to that shared ask's decision row (see _fused_pick_and_gate)."""
     if is_denied(command.command):
         return GateResult(verdict=GateVerdict.DENIED, reason="deny_listed")
@@ -239,9 +245,9 @@ async def propose_from_closed_set(
         print(f"picked {pick_verb}: {pick_answer.choice} (confidence {pick_answer.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})")
     if is_abstain(pick_answer.choice):
         return ClosedSetProposal(None, pick_answer.confidence, reasons=("judge abstained: picked none_of_these, so none of the options fit",))
-    if answers["any_fit"].noul < 0.5:
+    if answers["any_fit"].noul < profile.noul_floor:
         return ClosedSetProposal(None, pick_answer.confidence, reasons=(f"none of the {len(options)} options fit this goal",))
-    ok, reason = confidence_gate(pick_answer.probabilities, pick_answer.confidence)
+    ok, reason = confidence_gate(pick_answer.probabilities, pick_answer.confidence, profile.min_confidence, profile.min_margin)
     if not ok:
         return ClosedSetProposal(None, pick_answer.confidence, reasons=(reason,))
     command = command_for(pick_answer.choice)

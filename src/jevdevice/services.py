@@ -116,11 +116,11 @@ async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, 
         print(f"service: {service_pick.choice} (confidence {service_pick.confidence:.2f})")
         print(f"enabled: {enabled_pick.choice} (confidence {enabled_pick.confidence:.2f})")
         print(f"names_one: {answers['names_one'].noul:.2f}\n")
-    if answers["names_one"].noul < 0.5:
+    if answers["names_one"].noul < profile.noul_floor:
         return ToggleProposal(None, None, reasons=(f"goal doesn't name one of {', '.join(TOGGLEABLE_SERVICES)}",))
     if is_abstain(service_pick.choice) or is_abstain(enabled_pick.choice):
         return ToggleProposal(None, None, reasons=("judge abstained: picked none_of_these for the service or its direction",))
-    service, enabled = gated(service_pick), gated(enabled_pick)
+    service, enabled = gated(service_pick, profile=profile), gated(enabled_pick, profile=profile)
     if service is None or enabled is None:
         return ToggleProposal(service, enabled, reasons=("confidence gate rejected service or enabled pick",))
 
@@ -182,7 +182,7 @@ async def execute_toggle(
     )
     satisfied = verify["satisfied"].noul
     if verbose:
-        print(f"\n=== RESULT ===\nJev verify noul: {satisfied:.2f}\ngoal met: {satisfied >= 0.5}")
+        print(f"\n=== RESULT ===\nJev verify noul: {satisfied:.2f}\ngoal met: {satisfied >= current_profile(jev.engine_name).noul_floor}")
     return ToggleOutcome(result.exit_code, check_service, resolve_verdict.confidence, satisfied)
 
 

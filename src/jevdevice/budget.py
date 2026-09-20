@@ -22,7 +22,7 @@ reads, for engine-less call sites (describe_screen).
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ENGINE_ENV = "JEV_ENGINE"
 JEV_ENGINE_NAME = "jev"
@@ -54,6 +54,24 @@ class BudgetProfile:
     abstain_option: bool    # offer "none_of_these" in every choice
     probe_max_chars: int    # raw probe text (dumpsys status) clipped into state, chars
 
+    # Phase 4 calibration knobs, per engine. The jev profile keeps the
+    # historical values these gates were fit under; the laya profile carries
+    # its own refit (eval/phase4_recalibrate.py is the fitting harness). A
+    # temperature of None means "not fitted -- too few labeled rows": the fit
+    # floor is MIN_LABELS=20 labels per question type at precision >= 0.95
+    # (eval/phase4_recalibrate.py MIN_PRECISION); until then the raw scale is
+    # used unchanged. calibration_n records the sample count each fitted value
+    # rests on, so provenance survives config reads.
+    gate_threshold: float          # noul floor that auto-approves a mutating command
+    min_confidence: float          # Choice-confidence floor (matching.confidence_gate)
+    min_margin: float              # top1-top2 probability margin floor
+    min_fit: float                 # per-candidate "does this really fit" noul floor
+    noul_floor: float              # any_fit / satisfied / names_one noul floor
+    temp_choice: float | None = None   # fitted temperature per question type
+    temp_noul: float | None = None     # (None = not fitted; raw scale unchanged)
+    temp_score: float | None = None
+    calibration_n: dict[str, int] = field(default_factory=dict)
+
 
 # The hosted engine keeps today's values exactly: 200-candidate chunks as
 # headroom under the 255-option cap, 150-label screens, no retrieval
@@ -70,6 +88,11 @@ JEV_PROFILE = BudgetProfile(
     descriptions_in_state=False,
     abstain_option=False,
     probe_max_chars=2000,
+    gate_threshold=0.8,
+    min_confidence=0.6,
+    min_margin=0.15,
+    min_fit=0.5,
+    noul_floor=0.5,
 )
 
 # The in-process engine: 20-candidate chunks under a 256-token head, 18-label
@@ -89,6 +112,28 @@ LAYA_PROFILE = BudgetProfile(
     descriptions_in_state=True,
     abstain_option=True,
     probe_max_chars=1200,
+    # Thresholds: the pre-recalibration jev-era values. Phase 4's refit pass
+    # (eval/phase4_recalibrate.py over the journaled dev taps) could NOT clear
+    # the auto-apply bar -- precision never reaches 0.95 at any acting
+    # threshold (gate noul max 1.0 on only 4 approvals with n_total=14 < 20;
+    # fit-noul floor max 0.60 at n=220; final-pick choice max 0.75 at n=21) --
+    # so every value stays put and laya escalates fail-closed exactly as the
+    # jev-era thresholds make it. Refit waits for more labeled rows (P4.5
+    # loop / P6 fine-tune). Provenance: engine revision 1c5edc17a7acd8701df6fc341c0d179f1c62c982,
+    # taps captured 2026-09-20 on JEV_DEVICE=cuda (CPU is the runtime default;
+    # CPU-vs-CUDA drift measured 0.006 on a simple probe, unquantified on the
+    # narrowing scale -- rerun the taps on CPU before trusting a CPU-runtime refit).
+    gate_threshold=0.8,
+    min_confidence=0.6,
+    min_margin=0.15,
+    min_fit=0.5,
+    noul_floor=0.5,
+    # No temperature fitted: choice vectors judgeable for the fit numbered
+    # 10 (< 20 floor); nouls have no logits on the wire to fit against.
+    temp_choice=None,
+    temp_noul=None,
+    temp_score=None,
+    calibration_n={"choice": 21, "noul": 234, "score": 0},
 )
 
 PROFILES: dict[str, BudgetProfile] = {JEV_ENGINE_NAME: JEV_PROFILE, LAYA_ENGINE_NAME: LAYA_PROFILE}

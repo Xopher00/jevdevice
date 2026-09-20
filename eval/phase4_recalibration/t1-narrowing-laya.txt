@@ -1,0 +1,20 @@
+=== packages (476 real) ===
+obvious-fit                      'open Gmail'                     ok=True   choice=com.google.mainline.adservices confidence=0.88 fit=0.51 best_fit=0.52
+obvious-fit, zero lexical overlap 'check my email'                 ok=False  choice=com.android.mms.service confidence=0.97 fit=0.48 best_fit=0.48
+                                                                  reasons: ['nothing in the shortlist fits (best 0.48 below 0.5)']
+near-tie                         'open messages'                  ok=True   choice=com.samsung.android.messaging confidence=0.99 fit=0.69 best_fit=0.69
+near-tie                         'take a photo'                   ok=True   choice=com.google.android.apps.photos confidence=0.99 fit=0.59 best_fit=0.68
+genuinely-absent                 'book me a flight to Paris'      ok=False  choice=com.samsung.android.wifi.decrease.scan.interval.resources confidence=0.84 fit=0.23 best_fit=0.61
+                                                                  reasons: ["ranked winner isn't the one that fits (fit 0.23 below 0.5)"]
+genuinely-absent                 'order a pizza'                  ok=False  choice=com.sec.android.app.popupcalculator confidence=0.34 fit=0.35 best_fit=0.39
+                                                                  reasons: ['nothing in the shortlist fits (best 0.39 below 0.5)', 'confidence 0.34 below 0.6']
+
+=== dumpsys services (318 real) ===
+obvious-fit                      'what is my battery level?'      ok=False  choice=battery confidence=1.00 fit=0.43 best_fit=0.51
+                                                                  reasons: ["ranked winner isn't the one that fits (fit 0.43 below 0.5)"]
+obvious-fit                      'am I connected to wifi?'        ok=True   choice=wifi confidence=1.00 fit=0.56 best_fit=0.60
+near-tie                         "what's using the most memory?"  ok=True   choice=secure_element_mpos confidence=0.74 fit=0.57 best_fit=0.57
+genuinely-absent                 "what's the weather today?"      ok=False  choice=stats confidence=1.00 fit=0.39 best_fit=0.45
+                                                                  reasons: ['nothing in the shortlist fits (best 0.45 below 0.5)']
+genuinely-absent                 'turn off airplane mode'         ok=False  choice=None confidence=0.51 fit=0.00 best_fit=0.44
+                                                                  reasons: ['judge abstained: picked none_of_these, so nothing on the shortlist fits']
