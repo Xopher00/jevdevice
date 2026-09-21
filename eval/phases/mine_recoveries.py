@@ -27,7 +27,13 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-from jevdevice.decision_log import ESCALATED, FAILED, NONE, VERIFIED, DecisionJournal
+from jevdevice.journal.decision_log import (
+    ESCALATED,
+    FAILED,
+    NONE,
+    VERIFIED,
+    DecisionJournal,
+)
 
 OUT_FILE = REPO / "eval" / "phases" / "flywheel" / "recovery_pairs.jsonl"
 MAX_CHAIN_CALL_IDS = 20  # per side of the pair; bounded, named knob

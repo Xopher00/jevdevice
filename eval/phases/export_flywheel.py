@@ -29,7 +29,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 
 from jevdevice.budget import NONE_OF_THESE
-from jevdevice.decision_log import VERIFIED, DecisionJournal
+from jevdevice.journal.decision_log import VERIFIED, DecisionJournal
 
 OUT_DIR = REPO / "eval" / "phases" / "flywheel"
 FORMAT_VERSION = "flywheel-v1"  # bump on any format change; the card + doc record it

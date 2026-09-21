@@ -45,7 +45,7 @@ async def run_goals() -> list[dict]:
 
 
 def journal_rows_for_goals() -> list[dict]:
-    from jevdevice.decision_log import DecisionJournal, goal_id_for
+    from jevdevice.journal.decision_log import DecisionJournal, goal_id_for
 
     ids = {goal_id_for(goal) for goal in GOALS}
     out = []

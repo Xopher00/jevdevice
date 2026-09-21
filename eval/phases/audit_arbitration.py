@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from jevdevice.budget import current_profile, is_abstain
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 from jevdevice.matching import decide
 
 HERE = Path(__file__).resolve().parent

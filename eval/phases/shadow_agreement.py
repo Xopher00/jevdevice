@@ -18,7 +18,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 
 def _choice_winner(answer: dict) -> str | None:

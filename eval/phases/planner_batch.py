@@ -25,7 +25,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 
 
-from jevdevice.decision_log import goal_id_for
+from jevdevice.journal.decision_log import goal_id_for
 
 OUT_DIR = REPO / "eval" / "phases" / "recipes"
 RUNS_FILE = OUT_DIR / "runs.jsonl"
@@ -63,8 +63,8 @@ def run_one(goal: str) -> int:
     """Worker subprocess: bootstrap the real stack and resolve one goal."""
     os.environ.setdefault("JEV_SHADOW", "0")
 
-    from jevdevice import planner
     from jevdevice.common import bootstrap
+    from jevdevice.execution import planner
 
     async def main() -> dict:
         jev, transport = bootstrap()

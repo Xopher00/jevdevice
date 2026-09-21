@@ -183,7 +183,7 @@ async def run_one(goal: str, setup_ids: list[str]) -> dict:
     assert os.environ.get("JEV_SHADOW", "0") == "0", "shadow must be off for harness runs"
     assert os.environ.get("JEV_ENGINE", "jev") == "jev", "the harness drives the recorded default engine"
 
-    from jevdevice.decision_log import goal_id_for
+    from jevdevice.journal.decision_log import goal_id_for
     from jevdevice.mcp_server import mcp
 
     setup_statuses: list[dict] = []
@@ -283,7 +283,7 @@ def _row_in_window(row: dict, started: datetime, finished: datetime) -> bool:
 def extract_trajectories(journal, runs: list[dict]) -> tuple[list[dict], dict[str, dict]]:
     """Pure core of `report`: journal-only join of each run's rows (primary only,
     ts-windowed) into trajectories + per-run status. Testable without a device."""
-    from jevdevice.decision_log import VERIFIED
+    from jevdevice.journal.decision_log import VERIFIED
 
     trajectories = []
     per_run_status = {}
@@ -316,7 +316,7 @@ def extract_trajectories(journal, runs: list[dict]) -> tuple[list[dict], dict[st
 
 def cmd_report() -> dict:
     """Offline (journal-only) trajectory extraction + batch summary."""
-    from jevdevice.decision_log import DecisionJournal
+    from jevdevice.journal.decision_log import DecisionJournal
 
     journal = DecisionJournal()
     runs = _read_runs()

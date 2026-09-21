@@ -112,7 +112,7 @@ async def kind_case(client: LayaClient, goal: str, options: dict) -> dict:
 
 async def main() -> int:
     client = LayaClient()
-    from jevdevice.app_launch import parse_package_list
+    from jevdevice.actions.app_launch import parse_package_list
     from jevdevice.common import load_env_file
     from jevdevice.transport import AdbTransport
     load_env_file()  # ANDROID_SERIAL rides in the workspace .env; import-time constants predate it

@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 GOLDEN_PHASES = {"recall", "ground", "fill", "gate", "verify", "kind"}
 QUESTION_SETS_DIR = REPO / "src" / "jevdevice" / "question_sets"
@@ -54,13 +54,13 @@ FIT_FLOWS = {
 
 # the module constants that must equal artifact entries (pre- AND post-rewiring)
 CONSTANT_IDS = [
-    ("jevdevice.ui", "TAP_SAFE_INSTRUCTIONS", "tap.safe"),
-    ("jevdevice.ui", "TYPE_SAFE_INSTRUCTIONS", "type.safe"),
-    ("jevdevice.ui", "LONG_PRESS_SAFE_INSTRUCTIONS", "long_press.safe"),
-    ("jevdevice.ui", "SWIPE_SAFE_INSTRUCTIONS", "swipe.safe"),
-    ("jevdevice.gate", "DEFAULT_SAFE_INSTRUCTIONS", "gate.safe.default"),
-    ("jevdevice.services", "KEYEVENT_SAFE_INSTRUCTIONS", "keyevent.safe"),
-    ("jevdevice.services", "DND_SAFE_INSTRUCTIONS", "dnd.safe"),
+    ("jevdevice.actions.ui", "TAP_SAFE_INSTRUCTIONS", "tap.safe"),
+    ("jevdevice.actions.ui", "TYPE_SAFE_INSTRUCTIONS", "type.safe"),
+    ("jevdevice.actions.ui", "LONG_PRESS_SAFE_INSTRUCTIONS", "long_press.safe"),
+    ("jevdevice.actions.ui", "SWIPE_SAFE_INSTRUCTIONS", "swipe.safe"),
+    ("jevdevice.judge.gate", "DEFAULT_SAFE_INSTRUCTIONS", "gate.safe.default"),
+    ("jevdevice.actions.services", "KEYEVENT_SAFE_INSTRUCTIONS", "keyevent.safe"),
+    ("jevdevice.actions.services", "DND_SAFE_INSTRUCTIONS", "dnd.safe"),
 ]
 
 

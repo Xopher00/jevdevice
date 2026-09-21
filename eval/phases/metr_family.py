@@ -27,7 +27,7 @@ if str(PHASES) not in sys.path:
 
 from splitguard import dev_goals
 
-from jevdevice.decision_log import VERIFIED, goal_id_for
+from jevdevice.journal.decision_log import VERIFIED, goal_id_for
 
 FAMILY_NAME = "jevdevice-phone"
 # METR task families expose one family per deployment surface; the phone goals
@@ -64,7 +64,7 @@ class PhoneTaskFamily:
         """One task through the real runtime: the tiered planner resolves it
         (recipe hit -> adapt -> stepwise -> cold goal), never auto-approving.
         Returns the PlannerResult; scoring is `verify`."""
-        from jevdevice.planner import resolve
+        from jevdevice.execution.planner import resolve
 
         return await resolve(jev, device, self.add_instructions(task_name),
                              executor=executor, store=store)
@@ -86,6 +86,6 @@ def aggregate_scores(task_names: list[str], journal_rows=None) -> dict[str, floa
 
 
 def _journal_rows() -> list[dict]:
-    from jevdevice.decision_log import get_journal
+    from jevdevice.journal.decision_log import get_journal
 
     return list(get_journal().replay())

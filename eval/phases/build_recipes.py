@@ -16,8 +16,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent.parent
 
 
-from jevdevice.decision_log import DecisionJournal
-from jevdevice.recipes import RecipeStore, recipes_from_journal, verify_recipe
+from jevdevice.execution.recipes import RecipeStore, recipes_from_journal, verify_recipe
+from jevdevice.journal.decision_log import DecisionJournal
 
 OUT_DIR = REPO / "eval" / "phases" / "recipes"
 

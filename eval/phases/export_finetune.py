@@ -50,7 +50,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 import recalibrate_thresholds as p4r
 
 from jevdevice.budget import NONE_OF_THESE
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 OUT_DIR = REPO / "eval" / "phases" / "finetune"
 

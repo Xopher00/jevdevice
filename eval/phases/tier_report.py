@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 OUT_DIR = REPO / "eval" / "phases" / "recipes"
 PLANNER_STATUSES = {"planner_resolved", "planner_fallthrough", "cold_goal", "human_escalation"}

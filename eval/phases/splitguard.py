@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from jevdevice.decision_log import goal_id_for
+from jevdevice.journal.decision_log import goal_id_for
 
 EVAL_DIR = Path(__file__).resolve().parent.parent
 GOALS_FILE = EVAL_DIR / "goals.yaml"

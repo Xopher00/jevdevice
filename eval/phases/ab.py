@@ -47,7 +47,7 @@ async def run_worker(engine: str, only: list[str] | None = None) -> None:
 
     from mcp.shared.memory import create_connected_server_and_client_session
 
-    from jevdevice.decision_log import goal_id_for
+    from jevdevice.journal.decision_log import goal_id_for
     from jevdevice.mcp_server import mcp
 
     specs = dev_phone_goals()
@@ -81,7 +81,7 @@ def _pct(values: list[float], p: float) -> float | None:
 
 
 def scorecard(worker_files: list[Path]) -> dict:
-    from jevdevice.decision_log import DecisionJournal
+    from jevdevice.journal.decision_log import DecisionJournal
 
     rows = list(DecisionJournal().replay())
     primaries = [r for r in rows if r.get("type") == "decision" and r.get("shadow_of") is None]

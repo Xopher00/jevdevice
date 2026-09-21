@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from jevdevice.budget import PROFILES, current_profile
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 
 def _json_bytes(value) -> int:

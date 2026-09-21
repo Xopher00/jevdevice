@@ -29,7 +29,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from jevdevice.budget import NONE_OF_THESE
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 WRONG = "__wrong_pick__"  # sentinel: a real option was picked, not the correct one
 

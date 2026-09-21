@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from jevdevice import gate as gate_mod
 from jevdevice.budget import current_profile
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.judge import gate as gate_mod
 
 HERE = Path(__file__).resolve().parent
 
