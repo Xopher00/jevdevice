@@ -1,5 +1,10 @@
 # jevdevice: full plan
 
+> **Status note (2026-09-21):** this is the founding design document, kept for
+> its rationale (the "nobody hand-writes device commands" rule, the inventory
+> of what IS hand-written, and the guards). The current architecture, surface
+> and status live in `README.md`; where the two differ, README + the code win.
+
 A general tool that lets any agent operate any device. Three parts: a small local model supplies
 small commands and turns messy output into structure; Jev judges at every junction; a graph of
 proven commands is built while the system runs and makes later goals cheaper.
