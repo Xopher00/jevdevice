@@ -3,18 +3,18 @@
 Reads the frozen artifact (src/jevdevice/question_sets/v1.yaml) and proves it
 against two sources of truth:
 
-1. THE GOLDEN SET: every journal question instance on the golden path (phases
+1. THE JOURNAL INSTANCES: every real-path question instance (phases
    recall/ground/fill/gate/verify/kind, primary rows only) must match exactly
    one template byte-for-byte, with slots recovered from the row's own state
    (candidate names, chosen_action/proposed_command/target_bounds reprs).
    Perturbation "probe" rows and eval-CLI "unlabeled" rows are eval tooling,
-   off the golden path, and are reported but not validated.
+   off the real path, and are reported but not validated.
 
 2. THE MODULE CONSTANTS: the *_SAFE_INSTRUCTIONS constants must equal their
    artifact entries (the compile step ran pre- and post-rewiring; after the
    rewiring the constants are themselves sourced from this artifact).
 
-Exit code 0 = every golden-path instance witnessed, no unmatched instances.
+Exit code 0 = every real-path instance witnessed, no unmatched instances.
 Writes witness counts back into the artifact as provenance (validated: true).
 
 Run: uv run python eval/phases/compile_questions.py
@@ -197,12 +197,12 @@ def main() -> int:
     problems = validate_fused_prefix(load_templates()) + validate_constants()
     templates = load_templates()
     print(f"artifact entries: {len(templates)}")
-    print(f"witnessed: {sum(witnesses.values())} golden-path journal instances across {len(witnesses)} templates")
+    print(f"witnessed: {sum(witnesses.values())} journal instances across {len(witnesses)} templates")
     for question_id, n in sorted(witnesses.items()):
         print(f"  {n:>4}x  {question_id}")
     unwitnessed = sorted(set(templates) - set(witnesses))
     if unwitnessed:
-        print("unwitnessed templates (validated: false -- no golden example asks them yet):")
+        print("unwitnessed templates (validated: false -- no journal example asks them yet):")
         for question_id in unwitnessed:
             print(f"  - {question_id}")
     if unmatched:
