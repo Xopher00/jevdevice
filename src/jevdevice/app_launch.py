@@ -51,6 +51,9 @@ class LaunchOutcome:
     attempts: int
     observed: str
     reasons: tuple[str, ...] = ()
+    # Journal linkage: the pick's round-2 ground ask, so the outcome row (emitted
+    # by mcp_server for this ungated kind) joins the decision row that chose it.
+    call_id: str | None = None
 
 
 async def launch_app_for_goal(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> LaunchOutcome:
@@ -70,7 +73,7 @@ async def launch_app_for_goal(jev: JevClient, transport: AdbTransport, goal: str
     if not verdict.ok:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(verdict.reasons)}")
-        return LaunchOutcome(None, verdict.confidence, False, 0.0, 0, "", tuple(verdict.reasons))
+        return LaunchOutcome(None, verdict.confidence, False, 0.0, 0, "", tuple(verdict.reasons), call_id=verdict.call_id)
     package = verdict.choice
 
     await transport.run(f"monkey -p {package} 1")
@@ -78,4 +81,4 @@ async def launch_app_for_goal(jev: JevClient, transport: AdbTransport, goal: str
     if verbose:
         print(f"foreground: {observed}")
         print(f"goal met: {launched} (noul={satisfied:.2f}, after {attempts} attempt(s))")
-    return LaunchOutcome(package, verdict.confidence, launched, satisfied, attempts, observed)
+    return LaunchOutcome(package, verdict.confidence, launched, satisfied, attempts, observed, call_id=verdict.call_id)

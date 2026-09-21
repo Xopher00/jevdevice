@@ -99,7 +99,7 @@ def _emit_outcome(
     *, call_id: str | None = None, executed_command: str | None = None,
     verification: str = NONE, status: str | None = None, response: dict | None = None,
     recovery_command: str | None = None, graph_edge: dict | None = None,
-    decision: str | None = None,
+    decision: str | None = None, executed: list | None = None,
 ) -> None:
     """Fire-and-forget outcome row; DecisionJournal.record_outcome is fail-open,
     so telemetry can never break the action path it observes."""
@@ -115,6 +115,7 @@ def _emit_outcome(
         status=status, recovery_command=recovery_command, graph_edge=graph_edge,
         device=transport.serial, decision=decision, reasons=reasons,
         exit_code=exit_code, satisfied=satisfied, goal=goal, goal_id=goal_id,
+        executed=executed,
     )
 
 
@@ -242,19 +243,49 @@ async def _do_gated(kind: str, goal: str, *, verify: bool = True, auto_approve: 
 
 
 async def _do_open_app(goal: str, **_kw) -> dict:
-    return _launch_response(await launch_app_for_goal(jev, transport, goal, verbose=False))
+    result = await launch_app_for_goal(jev, transport, goal, verbose=False)
+    response = _launch_response(result)
+    # Ungated-kind coverage: these kinds emit their own outcome rows here (P1
+    # follow-up, landed P7) so trajectories join by call_id like every other kind.
+    _emit_outcome(
+        call_id=result.call_id,
+        executed_command=f"monkey -p {result.package} 1" if result.package else None,
+        verification=_verification_from_response(response),
+        response=response,
+    )
+    return response
 
 
 async def _do_dumpsys(goal: str, **_kw) -> dict:
-    return _dumpsys_response(await run_dumpsys_query(jev, transport, goal, verbose=False))
+    result = await run_dumpsys_query(jev, transport, goal, verbose=False)
+    response = _dumpsys_response(result)
+    _emit_outcome(
+        call_id=result.call_id,
+        executed_command=f"dumpsys {result.service}" if result.service else None,
+        verification=_verification_from_response(response),
+        response=response,
+    )
+    return response
 
 
 async def _do_scroll_to_find(goal: str, *, direction: str = "down", max_attempts: int = 8, **_kw) -> dict:
-    return _scroll_response(await scroll_to_find(jev, transport, goal, direction=direction, max_attempts=max_attempts, verbose=False))
+    result = await scroll_to_find(jev, transport, goal, direction=direction, max_attempts=max_attempts, verbose=False)
+    response = _scroll_response(result)
+    _emit_outcome(
+        call_id=result.call_id,
+        executed_command=result.executed[-1] if result.executed else None,
+        verification=_verification_from_response(response),
+        response=response,
+        executed=list(result.executed),
+    )
+    return {**response, "executed": list(result.executed)}
 
 
 async def _do_screenshot(goal: str, **_kw) -> dict:
-    return {"status": "ok"}
+    response = {"status": "ok"}
+    _emit_outcome(call_id=None, executed_command="screencap -p",
+                  verification=_verification_from_response(response), response=response)
+    return response
 
 
 # Kinds outside KIND_TABLE's propose->gate->execute shape -- same special-casing run_toolkit uses.

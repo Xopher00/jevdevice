@@ -233,6 +233,9 @@ class DumpsysOutcome:
     parsed: dict[str, str] | None = None
     answer_key: str | None = None
     reasons: tuple[str, ...] = ()
+    # Journal linkage: the service pick's round-2 ground ask (or the answer-field
+    # pick's when one ran), so the outcome row joins the decision row that chose it.
+    call_id: str | None = None
 
 
 async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> DumpsysOutcome:
@@ -256,7 +259,7 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
     if not verdict.ok:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(verdict.reasons)}")
-        return DumpsysOutcome(None, verdict.confidence, verdict.fit, reasons=tuple(verdict.reasons))
+        return DumpsysOutcome(None, verdict.confidence, verdict.fit, reasons=tuple(verdict.reasons), call_id=verdict.call_id)
 
     if verbose:
         print(f"--- step 4: code builds the command deterministically: dumpsys {verdict.choice} ---")
@@ -289,4 +292,5 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
             print(f"  {key}: {value}")
         if answer_key:
             print(f"\nanswer: {answer_key} = {parsed[answer_key]}")
-    return DumpsysOutcome(verdict.choice, verdict.confidence, verdict.fit, parsed, answer_key)
+    return DumpsysOutcome(verdict.choice, verdict.confidence, verdict.fit, parsed, answer_key,
+                          call_id=field_verdict.call_id if field_verdict.ok else verdict.call_id)

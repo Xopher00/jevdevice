@@ -91,6 +91,10 @@ class NarrowVerdict:
     shortlist: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)  # every signal that fired
     alternatives: list[str] = field(default_factory=list)  # other real candidates that also cleared min_fit
+    # Journal linkage: the round-2 ground ask's call_id, so the downstream
+    # outcome row (open_app/dumpsys/scroll_to_find) joins the decision row that
+    # picked the executed candidate. None on paths that never asked.
+    call_id: str | None = None
 
     @property
     def ok(self) -> bool:

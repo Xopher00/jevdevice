@@ -28,7 +28,9 @@ hosted engine keeps today's behavior exactly):
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 
 from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
@@ -150,15 +152,21 @@ async def _pick_and_decide(
     else:
         criteria = {c: evidence.get(c) for c in shortlist}
     state = {"goal": query, "candidates": criteria, **(state_extra or {})}
+    # This ask's call_id travels out on the verdict so the downstream outcome row
+    # (open_app/dumpsys/scroll_to_find) joins the decision row that picked what ran.
+    call_id = str(uuid.uuid4())
     answers = await jev.ask(state, {
         "pick": Choice(instructions=instructions, criteria=choice_criteria(criteria, profile)),
         **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source),
-    }, phase="ground")
+    }, phase="ground", call_id=call_id)
     pick = answers["pick"]
     fits = extract_fits(answers, shortlist)
     if is_abstain(pick.choice):
-        return _abstain_verdict(shortlist, fits, pick.confidence)
-    return decide(pick.choice, pick.probabilities, pick.confidence, fits, enumerated, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting)
+        return replace(_abstain_verdict(shortlist, fits, pick.confidence), call_id=call_id)
+    return replace(
+        decide(pick.choice, pick.probabilities, pick.confidence, fits, enumerated, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting),
+        call_id=call_id,
+    )
 
 
 async def narrow_and_pick(

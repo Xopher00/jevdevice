@@ -326,6 +326,10 @@ class ScrollToFindOutcome:
     found: str | None
     attempts: int
     reasons: tuple[str, ...] = ()
+    # Journal linkage + what actually ran: the screen-check verdict that resolved
+    # (or the last one when it never did), and every swipe command executed on the way.
+    call_id: str | None = None
+    executed: tuple[str, ...] = ()
 
 
 async def scroll_to_find(
@@ -335,6 +339,8 @@ async def scroll_to_find(
     """Re-checks the real screen against the goal every attempt and swipes only when the
     target genuinely isn't there yet -- reuses narrow_and_pick (is it visible now?) and
     propose_swipe/execute_swipe (one real gesture) instead of paging a fixed number of times."""
+    executed: list[str] = []
+    last_call_id: str | None = None
     for attempt in range(1, max_attempts + 1):
         elements = parse_all_elements(await dump_screen(transport))
         options = short_options(elements) if current_profile(jev.engine_name).short_labels else elements
@@ -344,18 +350,23 @@ async def scroll_to_find(
             fit_instructions=question_sets.text("scroll_to_find.fit"),
             describe=lambda c, options=options: options[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
         )
+        last_call_id = verdict.call_id
         if verbose:
             print(f"attempt {attempt}/{max_attempts}: picked {verdict.choice!r} ok={verdict.ok}")
         if verdict.ok:
-            return ScrollToFindOutcome(verdict.choice, attempt)
+            return ScrollToFindOutcome(verdict.choice, attempt, call_id=verdict.call_id, executed=tuple(executed))
 
         proposal = await propose_swipe(jev, transport, f"scroll {direction}", verbose=False)
         # Only proposal.ready runs here -- a needs_approval verdict stops the loop like
         # any other unapproved command, it is never executed implicitly.
         if proposal.ready is None:
-            return ScrollToFindOutcome(None, attempt, reasons=("swipe gate did not approve scrolling", *proposal.reasons))
+            return ScrollToFindOutcome(
+                None, attempt, reasons=("swipe gate did not approve scrolling", *proposal.reasons),
+                call_id=last_call_id, executed=tuple(executed),
+            )
+        executed.append(proposal.ready.command)
         await execute_command(transport, proposal.ready)
-    return ScrollToFindOutcome(None, max_attempts, reasons=(f"not found after {max_attempts} scrolls",))
+    return ScrollToFindOutcome(None, max_attempts, reasons=(f"not found after {max_attempts} scrolls"), call_id=last_call_id, executed=tuple(executed))
 
 
 async def _verify_after_action(

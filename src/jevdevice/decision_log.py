@@ -230,9 +230,12 @@ class DecisionJournal:
         device: str | None = None, decision: str | None = None,
         reasons=None, exit_code: int | None = None, satisfied: float | None = None,
         goal: str | None = None, goal_id: str | None = None,
+        executed=None,
     ) -> None:
         """One row per execution-flow event (ran / needs approval / denied),
-        joined to its decision row(s) by call_id."""
+        joined to its decision row(s) by call_id. `executed` (additive, default
+        None) lists EVERY command a multi-command action ran -- scroll_to_find's
+        swipes -- not just the last one, which `executed_command` carries."""
         if not self.enabled:
             return
         row = {
@@ -251,6 +254,7 @@ class DecisionJournal:
             "reasons": reasons,
             "exit_code": exit_code,
             "satisfied": satisfied,
+            "executed": list(executed) if executed else None,
         }
         try:
             self._append({key: self._blobify(value) for key, value in row.items()})
