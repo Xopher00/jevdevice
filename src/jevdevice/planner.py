@@ -26,13 +26,25 @@ from dataclasses import dataclass, field
 
 from . import outcomes, question_sets
 from .budget import current_profile
-from .decision_log import NONE, goal_id_for, goal_scope
+from .decision_log import NONE, VERIFIED, goal_id_for, goal_scope
 from .dispatch import pick_kind, run_kind
 from .elements import describe_screen, dump_screen, screen_summary
 from .recipes import Recipe, RecipeStore
 
 MAX_PLANNER_STEPS = 12  # stepwise-selection bound: most actions one goal may take
 ESCALATION_LIMIT = 2    # consecutive unresolvable steps before giving up on a tier
+# Kinds whose device-verified result is itself the goal's deliverable: a
+# dumpsys "ok" resolves a service AND an answer field against the goal from
+# real command output -- output-grounded satisfaction the screen-only
+# done-check cannot observe, because reads leave the screen unchanged.
+# Without this recognition the stepwise loop re-runs the same verified read
+# until the step bound trips and the goal falls through cold (planner batch
+# evidence: "What is the battery temperature?" ran `dumpsys battery` twelve
+# times, every step verified, then cold_goal). UI kinds stay out on purpose:
+# their verification is action-scoped ("this tap did what it said"), not
+# goal-scoped, so the loop's screen check remains the arbiter for compound
+# screen-trackable goals.
+OUTPUT_VERIFIED_KINDS = ("dumpsys",)
 
 
 @dataclass
@@ -119,6 +131,11 @@ async def _stepwise_loop(jev, device, goal: str, *, executor) -> tuple[list[Step
             continue
         result = await executor(jev, device, pick.kind, goal, tier=2)
         results.append(result)
+        if result.status == VERIFIED and result.kind in OUTPUT_VERIFIED_KINDS:
+            # The verified read answered the goal from device output; the
+            # screen-only done-check cannot observe it, so recognize it here
+            # instead of looping on an unchanged screen.
+            return results, True
         escalations = escalations + 1 if result.status == "escalated" else 0
         if escalations >= ESCALATION_LIMIT:
             return results, False

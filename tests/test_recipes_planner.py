@@ -279,6 +279,52 @@ async def test_tier2_stepwise_selection_resolves(journal_recorder, tmp_path) -> 
     assert [r["tier"] for r in journal_recorder.outcomes if r["status"] == "planner_resolved"] == [2]
 
 
+async def test_tier2_verified_read_resolves_without_a_screen_change(journal_recorder, tmp_path) -> None:
+    """Regression (planner batch evidence): a device-verified dumpsys step is
+    the goal's deliverable -- reads leave the screen unchanged, so the loop
+    must resolve on the verified read instead of re-running it to the step
+    bound. The batch run ground `dumpsys battery` twelve verified times and
+    still fell through cold."""
+    ran: list[str] = []
+
+    async def executor(jev, transport, kind, step_goal, **kw):
+        ran.append(kind)
+        return planner.StepResult(kind, step_goal, "verified")
+
+    # not done on screen -> pick dumpsys -> the read verifies: NO further
+    # satisfied ask may run (FakeJudge pops on empty would IndexError).
+    judge = FakeJudge([
+        {"satisfied": NoulAnswer(noul=0.1)},
+        _kind_pick_payload(kind="dumpsys"),
+    ])
+    result = await planner.resolve(judge, DumpTransport(), "What is the battery temperature?",
+                                   executor=executor, store=RecipeStore(tmp_path))
+    assert result.tier == 2 and result.status == "resolved"
+    assert ran == ["dumpsys"]  # exactly once -- not twelve times
+    assert len(judge.payloads) == 0  # the screen-only done-check never re-asked
+    assert result.steps[0].status == "verified"
+
+
+async def test_tier2_unverified_read_does_not_short_circuit(journal_recorder, tmp_path) -> None:
+    """The read short-circuit keys on VERIFIED only: an unconfirmed read (no
+    answer field resolved) keeps the loop fail-closed to the step bound."""
+    ran: list[str] = []
+
+    async def executor(jev, transport, kind, step_goal, **kw):
+        ran.append(kind)
+        return planner.StepResult(kind, step_goal, "none")
+
+    payloads: list[dict] = []
+    for _ in range(planner.MAX_PLANNER_STEPS):
+        payloads.append({"satisfied": NoulAnswer(noul=0.1)})
+        payloads.append(_kind_pick_payload(kind="dumpsys"))
+    judge = FakeJudge(payloads)
+    result = await planner.resolve(judge, DumpTransport(), "What is the battery temperature?",
+                                   executor=executor, store=RecipeStore(tmp_path))
+    assert result.tier == 3 and result.status == "cold_goal"
+    assert ran == ["dumpsys"] * planner.MAX_PLANNER_STEPS
+
+
 async def test_tier3_cold_goal_is_the_calling_agents_job(journal_recorder, tmp_path) -> None:
     async def executor(jev, transport, kind, step_goal, **kw):  # pragma: no cover
         raise AssertionError("a cold goal must never execute through the planner")
