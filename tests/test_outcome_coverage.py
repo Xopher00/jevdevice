@@ -247,3 +247,59 @@ async def test_ungated_escalations_emit_their_outcome_row_too(monkeypatch, outco
     assert row["call_id"] == "cid-esc"
     assert row["executed_command"] is None  # nothing ran
     assert row["verification"] == ESCALATED
+
+
+# --- needs_approval hooks: sync and async alike --------------------------------
+# The MCP server parks a pending action from a SYNC hook; run_kind's contract
+# (Callable[..., Awaitable[dict] | dict]) admits both, so a needs_approval
+# verdict must surface a plain-dict hook's return without awaiting it.
+
+_TOGGLE_FILL = {
+    # toggle fill: confident service + direction, goal names exactly one radio
+    "service": ChoiceAnswer(choice="bluetooth", probabilities={"bluetooth": 0.95, "nfc": 0.03, "data": 0.02}, confidence=0.95),
+    "enabled": ChoiceAnswer(choice="on", probabilities={"on": 0.95, "off": 0.05}, confidence=0.95),
+    "names_one": NoulAnswer(noul=0.95),
+}
+_TOGGLE_GATE_UNCERTAIN = {"safe": NoulAnswer(noul=0.5)}  # below the profile floor -> NEEDS_APPROVAL
+
+
+async def test_run_kind_sync_on_pending_hook_round_trips(monkeypatch, outcome_journal) -> None:
+    from jevdevice import dispatch
+
+    judge = FakeJudge("jev", [dict(_TOGGLE_FILL), dict(_TOGGLE_GATE_UNCERTAIN)])
+    seen: dict = {}
+
+    def sync_hook(goal, kind, resume_arg, confidence, pending, verify):
+        seen.update(goal=goal, kind=kind, resume_arg=resume_arg, confidence=confidence,
+                    command=pending.command.command, verify=verify)
+        return {"status": "needs_approval", "thread_id": "t1"}
+
+    response = await dispatch.run_kind(
+        judge, FakeTransport({}), "toggle_service", "turn on bluetooth", on_pending=sync_hook,
+    )
+    # the sync hook's plain dict must come back verbatim, un-awaited
+    assert response == {"status": "needs_approval", "thread_id": "t1"}
+    assert seen["goal"] == "turn on bluetooth"
+    assert seen["kind"] == "toggle_service"
+    assert seen["resume_arg"] == "bluetooth"
+    assert seen["command"] == "svc bluetooth enable"
+    assert seen["verify"] is True
+    # nothing executed: the empty canned transport has no result for any command
+    row = outcome_journal.outcomes[0]
+    assert row["status"] == "needs_approval"
+    assert row["executed_command"] is None
+
+
+async def test_run_kind_async_on_pending_hook_still_round_trips(monkeypatch, outcome_journal) -> None:
+    from jevdevice import dispatch
+
+    judge = FakeJudge("jev", [dict(_TOGGLE_FILL), dict(_TOGGLE_GATE_UNCERTAIN)])
+
+    async def async_hook(goal, kind, resume_arg, confidence, pending, verify):
+        return {"status": "needs_approval", "thread_id": "t2"}
+
+    response = await dispatch.run_kind(
+        judge, FakeTransport({}), "toggle_service", "turn on bluetooth", on_pending=async_hook,
+    )
+    assert response == {"status": "needs_approval", "thread_id": "t2"}
+    assert outcome_journal.outcomes[0]["status"] == "needs_approval"

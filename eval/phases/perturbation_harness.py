@@ -258,6 +258,28 @@ def cmd_run(limit: int | None, wanted_ids: list[str]) -> int:
     return 0
 
 
+def _ts_key(value: str) -> datetime:
+    """Normalize a timestamp for window comparison, in the journal's naive-local
+    frame. The runs index writes tz-aware UTC (`datetime.now(UTC).isoformat()`),
+    the journal writes naive local time (`datetime.now().isoformat()`) -- aware
+    stamps are converted to local and unwrapped so the join is
+    convention-independent (and sentinel windows like year 0001 stay valid)."""
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed  # journal convention: naive local
+    return parsed.astimezone().replace(tzinfo=None)  # runs index: aware UTC -> naive local
+
+
+def _row_in_window(row: dict, started: datetime, finished: datetime) -> bool:
+    ts = row.get("ts")
+    if not ts:
+        return False
+    try:
+        return started <= _ts_key(ts) <= finished
+    except ValueError:  # unparseable stamp: never window-match
+        return False
+
+
 def extract_trajectories(journal, runs: list[dict]) -> tuple[list[dict], dict[str, dict]]:
     """Pure core of `report`: journal-only join of each run's rows (primary only,
     ts-windowed) into trajectories + per-run status. Testable without a device."""
@@ -266,12 +288,13 @@ def extract_trajectories(journal, runs: list[dict]) -> tuple[list[dict], dict[st
     trajectories = []
     per_run_status = {}
     for run in runs:
+        started, finished = _ts_key(run["started_at"]), _ts_key(run["finished_at"])
         window_rows = [
             row for row in journal.replay()
             if row.get("type") in ("decision", "outcome")
             and row.get("shadow_of") is None
             and row.get("goal") == run["goal"]
-            and run["started_at"] <= row.get("ts", "") <= run["finished_at"]
+            and _row_in_window(row, started, finished)
         ]
         outcomes = [r for r in window_rows if r.get("type") == "outcome"]
         per_run_status[run["run_id"]] = {
@@ -301,7 +324,9 @@ def cmd_report() -> dict:
     FLYWHEEL_DIR.mkdir(parents=True, exist_ok=True)
     with open(TRAJECTORIES_FILE, "w", encoding="utf-8") as handle:
         handle.writelines(json.dumps(t, separators=(",", ":"), default=str) + "\n" for t in trajectories)
-    statuses = [r["worker_status"] for r in runs]
+    # worker status lives in the per-run rollup (extract_trajectories), not on
+    # the raw runs.jsonl rows -- those carry the plain `status` field.
+    statuses = [per_run_status[r["run_id"]]["worker_status"] for r in runs]
     summary = {
         "runs": len(runs),
         "verified_trajectories": sum(1 for s in per_run_status.values() if s["device_verified"]),

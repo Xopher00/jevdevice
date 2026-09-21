@@ -8,6 +8,7 @@ multi-step goals is always the caller's job -- this only ever resolves one goal 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 import time
 import uuid
@@ -414,8 +415,12 @@ async def run_kind(
         elif on_pending is not None:
             outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
                                   status="needs_approval", kind=kind, tier=tier, recipe_id=recipe_id)
-            return await on_pending(goal, kind, handler.resume_arg(proposal),
-                                    getattr(proposal, "confidence", 0.0), proposal.pending, verify)
+            # The hook contract (type hint above) admits sync and async alike:
+            # the MCP server parks a pending action synchronously, so the
+            # hook's return is awaited only when it is actually awaitable.
+            hooked = on_pending(goal, kind, handler.resume_arg(proposal),
+                                getattr(proposal, "confidence", 0.0), proposal.pending, verify)
+            return await hooked if inspect.isawaitable(hooked) else hooked
     if command is None:
         outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
                               status="escalated", kind=kind, tier=tier, recipe_id=recipe_id)
