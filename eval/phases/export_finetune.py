@@ -369,7 +369,7 @@ def main() -> int:
     card = {
         "generator": "eval/phases/export_finetune.py",
         "journal_dir": str(journal.directory),
-        "golden_set": "decision journal, dev-half only (heldout asserted absent; shadow_of rows excluded)",
+        "labeled_source": "decision journal, dev-half only (heldout asserted absent; shadow_of rows excluded)",
         "n_examples": len(examples),
         "n_train": len(train),
         "n_val": len(val),

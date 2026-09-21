@@ -2,7 +2,7 @@ version: v1
 compiled: '2026-09-21'
 source: ui.py/gate.py/services.py/dispatch.py/app_launch.py/narrowing.py literals at the 12 ask() call
   sites
-golden_set: decision journal (~/.jevdevice/journal); see eval/phases/finetune/dataset_card.json
+labeled_source: decision journal (~/.jevdevice/journal); see eval/phases/finetune/dataset_card.json
 questions:
   recall.any:
     type: noul

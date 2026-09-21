@@ -1,10 +1,10 @@
 """Question sets: versioned, frozen compile-time artifacts of every question
-phrasing the golden path can ask.
+phrasing the runtime can ask.
 
 The phrasings are compiled artifacts under question_sets/v{N}.yaml: the
 journal is the labeled-example source the compile step validates against
 (eval/phases/compile_questions.py), and the runtime CONSUMES the frozen set
--- it never invents phrasings on the golden path.
+-- it never invents phrasings at runtime.
 
 Two load-bearing rules:
 
@@ -39,7 +39,7 @@ ENV_VERSION = "JEV_QUESTION_SET"  # named knob: select which frozen set the runt
 
 class CompiledQuestionError(RuntimeError):
     """Raised when a question id is unknown, a required slot is missing, or the
-    frozen artifact itself fails validation. Fail-closed: the golden path never
+    frozen artifact itself fails validation. Fail-closed: the runtime never
     falls back to improvising a question."""
 
 
@@ -55,7 +55,7 @@ class GeneratedNoul(Noul):
 def generated_noul(source: str, instructions: str, criteria: dict[str, str] | None = None) -> GeneratedNoul:
     """The escape hatch: build a question OUTSIDE the frozen set. The decision
     row journals `generated=<source>`; generated questions are eligible for
-    promotion into the next compiled set. Never use on the golden path."""
+    promotion into the next compiled set. Never use on the normal runtime path."""
     return GeneratedNoul(instructions=instructions, criteria=criteria, hatched_from=source)
 
 

@@ -206,7 +206,7 @@ def main() -> int:
         for question_id in unwitnessed:
             print(f"  - {question_id}")
     if unmatched:
-        print(f"\nUNMATCHED golden-path journal questions ({sum(unmatched.values())} rows) -- these MUST be zero or justified:")
+        print(f"\nUNMATCHED journal questions ({sum(unmatched.values())} rows) -- these MUST be zero or justified:")
         for key, n in sorted(unmatched.items()):
             print(f"  {n:>4}x  {key}")
     if problems:
