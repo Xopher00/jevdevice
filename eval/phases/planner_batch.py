@@ -1,6 +1,6 @@
-"""P7.5 T4 driver: run the tiered planner over the dev PHONE goals, unattended.
+"""Run the tiered planner over the dev phone goals, unattended.
 
-P5/P7 operational lessons, all load-bearing here:
+Operational rules, all load-bearing here:
 - one SUBPROCESS per goal with a hard timeout (a sweep fallback can cost minutes),
 - resumable runs.jsonl (first result wins; timed-out runs re-run),
 - JEV_SHADOW=0 forced (CPU laya adds ~20 s of background work per ask for nothing),
@@ -8,8 +8,8 @@ P5/P7 operational lessons, all load-bearing here:
   (fail-closed) and tiers fall through -- device_approve stays human,
 - every goal is a dev-half goal (held-out asserted absent from the plan).
 
-Usage: uv run python eval/phase75_run_goals.py run [--limit N]  /  report
-Tier telemetry afterwards: uv run python eval/phase75_report.py
+Usage: uv run python eval/phases/planner_batch.py run [--limit N]  /  report
+Tier telemetry afterwards: uv run python eval/phases/tier_report.py
 """
 
 from __future__ import annotations
@@ -22,24 +22,22 @@ import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
-import yaml
 
 from jevdevice.decision_log import goal_id_for
 
-FLYWHEEL_DIR = REPO / "eval" / "phase75_recipes"
-RUNS_FILE = FLYWHEEL_DIR / "runs.jsonl"
-GOAL_TIMEOUT_S = 600   # per-goal subprocess timeout (P5: fallbacks cost minutes)
+OUT_DIR = REPO / "eval" / "phases" / "recipes"
+RUNS_FILE = OUT_DIR / "runs.jsonl"
+GOAL_TIMEOUT_S = 600   # per-goal subprocess timeout (fallbacks can cost minutes)
 SLEEP_BETWEEN_RUNS_S = 20  # rate limit: device-safe pacing
 
 
 def dev_phone_goals() -> list[dict]:
-    data = yaml.safe_load((REPO / "eval" / "goals.yaml").read_text())
-    goals = [e for e in data["phone_questions"] if e.get("split") == "dev"]
-    heldout = {goal_id_for(e["goal"]) for e in data["phone_questions"] if e.get("split") == "heldout"}
-    assert not ({goal_id_for(g["goal"]) for g in goals} & heldout), "held-out goal in the dev plan"
+    import splitguard
+
+    goals = splitguard.dev_goals("phone_questions")
+    splitguard.assert_dev_only(goals)
     return goals
 
 
@@ -56,7 +54,7 @@ def _read_done() -> set[str]:
 
 
 def _append_run(run: dict) -> None:
-    FLYWHEEL_DIR.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(RUNS_FILE, "a") as handle:
         handle.write(json.dumps(run, default=str) + "\n")
 
@@ -64,7 +62,6 @@ def _append_run(run: dict) -> None:
 def run_one(goal: str) -> int:
     """Worker subprocess: bootstrap the real stack and resolve one goal."""
     os.environ.setdefault("JEV_SHADOW", "0")
-    os.environ.setdefault("TYPESAFE_AI_API", os.environ.get("TYPESAFE_AI_API", ""))
 
     from jevdevice import planner
     from jevdevice.common import bootstrap
@@ -72,7 +69,7 @@ def run_one(goal: str) -> int:
     async def main() -> dict:
         jev, transport = bootstrap()
         started = time.monotonic()
-        result = await planner.resolve(jev, transport, goal, verbose=False)
+        result = await planner.resolve(jev, transport, goal)
         return {
             "goal": goal,
             "goal_id": goal_id_for(goal),
@@ -124,8 +121,8 @@ def cmd_report() -> int:
         tiers[str(tier)]["runs"] += 1
         tiers[str(tier)]["resolved"] += 1 if payload.get("status") == "resolved" else 0
     summary = {"runs": len(runs), "by_tier": tiers}
-    FLYWHEEL_DIR.mkdir(parents=True, exist_ok=True)
-    (FLYWHEEL_DIR / "batch_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUT_DIR / "batch_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -133,7 +130,7 @@ def cmd_report() -> int:
 def main() -> int:
     args = sys.argv[1:]
     if not args:
-        print("usage: phase75_run_goals.py run [--limit N] | run-one '<goal>' | report", file=sys.stderr)
+        print("usage: planner_batch.py run [--limit N] | run-one '<goal>' | report", file=sys.stderr)
         return 2
     if args[0] == "run":
         limit = int(args[2]) if len(args) > 2 and args[1] == "--limit" else None

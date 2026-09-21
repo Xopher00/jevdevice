@@ -1,4 +1,4 @@
-"""P5 T2 — shadow agreement report (journal-only, zero model calls).
+"""Shadow agreement report (journal-only, zero model calls).
 
 Pairs each shadow decision row (shadow_of set, engine=laya) with the primary
 row it observed (call_id == shadow_of, engine=jev) and reports:
@@ -6,7 +6,7 @@ row it observed (call_id == shadow_of, engine=jev) and reports:
     plus mean |delta|; abstentions reported separately)
   - latency comparison from the rows' own elapsed_ms (p50/p95 per engine)
 
-Run: uv run python eval/phase5_report.py [journal_dir]
+Run: uv run python eval/phases/shadow_agreement.py [journal_dir]
 Output is pipe-friendly: JSON lines, then a human summary.
 """
 
@@ -17,8 +17,6 @@ import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from jevdevice.decision_log import DecisionJournal
 

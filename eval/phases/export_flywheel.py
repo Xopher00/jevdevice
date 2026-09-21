@@ -1,38 +1,37 @@
-"""P7 T3 — training-format exporters for the flywheel (SGCD-style + span-weighted).
+"""Training-format exporters for the failure-recovery data.
 
 Two exports, one version knob, one format doc (TRAINING_FORMAT.md + the dataset
 card carry the same spec the logbook records):
 
-  sgcd-v1            one row per recovery pair. The BROKEN PREFIX is context
-                     (no loss); supervision = the RECOVERY side's action +
-                     decision spans only. This is what makes a failure useful:
-                     the model learns how to get out, not how to get stuck.
+  sgcd-v1            one row per recovery pair. The broken prefix is context
+                     only (no loss on it); supervision is the recovery side's
+                     action + decision spans. This is what makes a failure
+                     useful: the model learns how to get out, not how to get
+                     stuck.
   span-weighted-v1   one row per verified trajectory, flattened into spans
-                     (action | decision | chatter) with per-role loss weights —
-                     naive uniform SFT over small models overfits the chatter.
+                     (action | decision | chatter) with per-role loss weights --
+                     uniform weighting overfits the chatter.
 
-Offline + journal-only; consumes phase7_mine_failures.py's recovery_pairs.jsonl
+Offline + journal-only; consumes mine_recoveries.py's recovery_pairs.jsonl
 and the journal directly for trajectories. Dev-half only: held-out goal texts
 are asserted absent from every emitted row. Shadow rows never enter.
 
-  uv run python eval/phase7_export_flywheel.py [journal_dir]
+  uv run python eval/phases/export_flywheel.py [journal_dir]
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 from collections import Counter
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
 from jevdevice.budget import NONE_OF_THESE
 from jevdevice.decision_log import VERIFIED, DecisionJournal
 
-OUT_DIR = REPO / "eval" / "phase7_flywheel"
+OUT_DIR = REPO / "eval" / "phases" / "flywheel"
 FORMAT_VERSION = "flywheel-v1"  # bump on any format change; the card + doc record it
 
 # --- loss-weight knobs (named, never bare numbers at a call site) ---------------
@@ -40,18 +39,16 @@ WEIGHT_ACTION = 1.0    # a command that actually ran on the device
 WEIGHT_DECISION = 1.0  # the judge's Choice pick (which app / element / service / kind)
 WEIGHT_CHATTER = 0.1   # Noul evidence (fits, verifies), reasons, abstain text
 
-_spec = importlib.util.spec_from_file_location("phase7_mine", REPO / "eval" / "phase7_mine_failures.py")
-p7m = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(p7m)
+import mine_recoveries as p7m
 
 TRAINING_FORMAT_DOC = """\
 # Flywheel training formats (version {version})
 
-Emitted by eval/phase7_export_flywheel.py from the decision journal
+Emitted by eval/phases/export_flywheel.py from the decision journal
 (dev-half only, shadow rows and held-out goals excluded).
 
 ## sgcd-v1 — loss on recovery actions only
-One row per mined recovery pair (eval/phase7_mine_failures.py).
+One row per mined recovery pair (eval/phases/mine_recoveries.py).
 - `context.broken_prefix`: ordered spans BEFORE the failure (action/decision/
   chatter, each with its call_id). CONTEXT ONLY — excluded from loss.
 - `context.broken_state`: the failure outcome row (status, reasons, attempted
@@ -69,7 +66,7 @@ One row per device-verified trajectory.
 Rationale: uniform SFT over small models overfits the chatter; loss weighting
 concentrates capacity on what actually moves the device.
 
-Reproduce: `uv run python eval/phase7_export_flywheel.py` (journal-only).
+Reproduce: `uv run python eval/phases/export_flywheel.py` (journal-only).
 """
 
 
@@ -188,7 +185,7 @@ def main() -> int:
     for row in weighted_rows:
         span_counts.update(span["role"] for span in row["spans"])
     card = {
-        "generator": "eval/phase7_export_flywheel.py",
+        "generator": "eval/phases/export_flywheel.py",
         "format_version": FORMAT_VERSION,
         "loss_weights": {"action": WEIGHT_ACTION, "decision": WEIGHT_DECISION, "chatter": WEIGHT_CHATTER},
         "sgcd_rows": len(sgcd_rows),

@@ -7,8 +7,8 @@ against two sources of truth:
    recall/ground/fill/gate/verify/kind, primary rows only) must match exactly
    one template byte-for-byte, with slots recovered from the row's own state
    (candidate names, chosen_action/proposed_command/target_bounds reprs).
-   P4-perturbation "probe" rows and eval-CLI "unlabeled" rows are eval tooling,
-   out of the golden path, and are reported but not validated.
+   Perturbation "probe" rows and eval-CLI "unlabeled" rows are eval tooling,
+   off the golden path, and are reported but not validated.
 
 2. THE MODULE CONSTANTS: the *_SAFE_INSTRUCTIONS constants must equal their
    artifact entries (the compile step ran pre- and post-rewiring; after the
@@ -17,18 +17,16 @@ against two sources of truth:
 Exit code 0 = every golden-path instance witnessed, no unmatched instances.
 Writes witness counts back into the artifact as provenance (validated: true).
 
-Run: uv run python eval/phase6_compile_questions.py
+Run: uv run python eval/phases/compile_questions.py
 """
 
 from __future__ import annotations
 
 import re
-import sys
 from collections import Counter
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
 from jevdevice.decision_log import DecisionJournal
 

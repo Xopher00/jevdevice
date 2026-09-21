@@ -1,8 +1,8 @@
-"""Phase 4 recalibration analysis: per-question-type probability quality and
+"""Recalibration analysis: per-question-type probability quality and
 threshold refits for the laya engine, from journaled decision rows with
 device-verified / hand-labeled dev-tap ground truth. Reads stored journal rows
 and the phase-4 CLI captures -- zero model calls, so it is safe to rerun any
-time (the P4.5 loop reuses these functions).
+time (the continuous-calibration loop reuses these functions).
 
 Question types (jev.py wire models): choice / noul. `score` has no rows yet.
 
@@ -18,7 +18,7 @@ Threshold sweeps (choice gate + noul floors) report precision/recall/
 escalation-rate per candidate value so a human can pick; the auto-pick only
 fires at precision >= MIN_PRECISION with enough labels.
 
-Run: uv run python eval/phase4_recalibrate.py [journal_dir]
+Run: uv run python eval/phases/recalibrate_thresholds.py [journal_dir]
 """
 
 from __future__ import annotations
@@ -233,7 +233,7 @@ def label_pick_rows(rows: list[dict]) -> list[dict]:
             continue  # round-1 chunk picks feed the beam, are never gated individually
         probabilities = pick.get("probabilities") or {}
         if row.get("phase") == "kind":
-            # dev-verified live (P2 smoke): every kind pick matched device truth.
+            # dev-verified live in smoke runs: every kind pick matched device truth.
             labeled.append({"phase": "kind", "confidence": pick["confidence"],
                             "probabilities": probabilities, "correct": pick.get("choice")})
             continue
@@ -350,7 +350,7 @@ def main() -> int:
         by_phase[row.get("phase")].append(row)
 
     gate_pairs = label_gate_rows(rows)
-    plot_dir = Path(__file__).parent / "phase4_recalibration"
+    plot_dir = Path(__file__).parent / "recalibration"
     plot_dir.mkdir(parents=True, exist_ok=True)
     report_noul("gate noul (safe: tap + mutation wording)", gate_pairs, plot_dir)
     fit_pairs = label_fit_rows(by_phase.get("ground", []))
@@ -358,7 +358,7 @@ def main() -> int:
     report_choice(rows)
     print("\nnoul temperature: not fittable from the wire (laya exposes no logits; "
           "p^(1/T) renormalization is only valid for a choice probability vector) "
-          "-- temp_noul stays None until P6/P4.5 exposes or estimates logits")
+          "-- temp_noul stays None until logits are exposed or estimated")
     return 0
 
 

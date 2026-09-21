@@ -1,14 +1,11 @@
-"""Shared outcome-row emission for every flow that runs a real action:
-mcp_server.py (device_do/device_approve), the P7.5 planner, and any future
-caller. One path instead of independently-maintained switches that drift.
+"""Shared outcome-row emission for every flow that runs a real action (the
+MCP server, the planner): one journaling path instead of per-caller copies
+that drift.
 
-`emit_outcome` is fail-open by construction -- DecisionJournal.record_outcome
-catches and prints -- so telemetry can never break the action it observes.
-`graph_edge` (foreground package before/after, guarded) is the P7.5 recipe
-primitive: a recipe step is an ordered graph_edge sequence. It costs two
-resident-uiautomator2 dumps (~0.6 s), so it is knob-gated (JEV_GRAPH_EDGE,
-default on) and always telemetry-loss-only: a failed dump is None, never an
-execution failure.
+A `graph_edge` records the foreground app before and after an action -- the
+unit stored-recipe chains are built from. It costs two screen dumps, so it
+is knob-gated (JEV_GRAPH_EDGE, default on) and telemetry-only: a failed
+dump yields None and never fails the action it observes.
 """
 
 from __future__ import annotations
@@ -18,8 +15,8 @@ import os
 from . import decision_log
 from .elements import dump_screen, foreground_package
 
-ENV_GRAPH_EDGE = "JEV_GRAPH_EDGE"  # "0"/"off" disables before/after foreground dumps
-GRAPH_EDGE_DEFAULT = True  # recipes (P7.5) need edges on real runs; knob exists for latency-critical use
+ENV_GRAPH_EDGE = "JEV_GRAPH_EDGE"  # "0"/"off" disables the before/after foreground dumps
+GRAPH_EDGE_DEFAULT = True
 
 
 def graph_edge_enabled() -> bool:
@@ -40,8 +37,10 @@ def verification_from_response(response: dict) -> str:
 
 
 async def foreground_safe(transport) -> str | None:
-    """Foreground package for graph_edge rows; a failed dump is telemetry loss,
-    never an execution failure."""
+    """Foreground app name for graph_edge rows; None when the knob is off or
+    the dump fails (telemetry loss, never an execution failure)."""
+    if not graph_edge_enabled():
+        return None
     try:
         return foreground_package(await dump_screen(transport))
     except Exception:  # noqa: BLE001 -- telemetry only
@@ -49,11 +48,8 @@ async def foreground_safe(transport) -> str | None:
 
 
 async def graph_edge_around(transport, run) -> tuple:
-    """Run `run()`, bracketing it with foreground dumps -> (outcome, edge).
-    edge is None when either side is missing or the knob is off -- telemetry
-    loss, never an execution failure."""
-    if not graph_edge_enabled():
-        return await run(), None
+    """Run `run()` bracketed with foreground dumps -> (outcome, edge). The
+    edge is None when the knob is off or either dump fails."""
     before = await foreground_safe(transport)
     outcome = await run()
     after = await foreground_safe(transport)
@@ -69,19 +65,22 @@ def emit_outcome(
     kind: str | None = None, tier: int | None = None, recipe_id: str | None = None,
     reasons=None,
 ) -> None:
-    """Fire-and-forget outcome row with the full shared field set (the additive
-    P7.5 fields kind/tier/recipe_id included)."""
-    reasons = exit_code = satisfied = None
+    """Fire-and-forget outcome row. `response`, when given, supplies the
+    status/reasons/exit_code/satisfied fields verbatim (explicit `reasons`
+    wins); `kind` names the action kind that ran; `tier`/`recipe_id` appear
+    only on planner-driven rows."""
+    exit_code = satisfied = None
     if response is not None:
         status = response.get("status", status)
         exit_code = response.get("exit_code")
         satisfied = response.get("satisfied")
-    reasons = reasons if reasons is not None else response.get("reasons") if response is not None else None
+        if reasons is None:
+            reasons = response.get("reasons")
     goal_id, goal = decision_log.current_goal()
     decision_log.get_journal().record_outcome(
         call_id=call_id, executed_command=executed_command, verification=verification,
         status=status, recovery_command=recovery_command, graph_edge=graph_edge,
-        device=getattr(transport, "serial", None) if transport is not None else None, decision=decision,
+        device=getattr(transport, "serial", None), decision=decision,
         reasons=reasons, exit_code=exit_code, satisfied=satisfied,
         goal=goal, goal_id=goal_id, executed=executed,
         kind=kind, tier=tier, recipe_id=recipe_id,

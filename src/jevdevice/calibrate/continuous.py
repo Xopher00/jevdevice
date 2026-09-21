@@ -1,19 +1,19 @@
-"""Continuous calibration loop (Phase 4.5): a rolling-window re-fit of the
+"""Continuous calibration loop: a rolling-window re-fit of the
 laya engine's thresholds from stored journal distributions -- ZERO model calls.
 
-The P4 one-shot recalibration decays; this makes re-fitting a routine instead
+A one-shot recalibration decays; this makes re-fitting a routine instead
 of an event. One run:
 
   1. reads journal decision + outcome rows (replay(), blobs resolved),
   2. joins them by call_id and tags each row's OUTCOME SOURCE SEGMENT --
      device-verified vs human-resolved (escalated) -- which are different
-     distributions (P4.5 T2),
+     distributions,
   3. recomputes accuracy/Brier/log-loss/ECE per question type and re-runs the
      threshold sweeps from the stored answers (no engine touch),
   4. emits provenance-tagged PROPOSED thresholds for the profile's calibration
-     knobs. Proposals never auto-apply: they shadow-run (P4.5 T3) and are
+     knobs. Proposals never auto-apply: they shadow-run and are
      applied only via the tighten-only promotion path (`apply_proposal` /
-     `promote` here, P4.5 T4).
+     `promote` here).
 
 Fail-closed asymmetry, made mechanical (Standing rule 3): `classify`
 compares each proposed knob against the incumbent and calls it `tighten`,
@@ -56,11 +56,11 @@ from jevdevice.decision_log import (
     DecisionJournal,
 )
 
-# ---- named knobs (P4.5 T1: window = last N days OR at least M rows; both apply) --
+# ---- named knobs (window = last N days OR at least M rows; both apply) ----
 WINDOW_DAYS = 30
 MIN_WINDOW_ROWS = 1000
 # Precision floor a proposed acting threshold must clear on the window before
-# it may be proposed at all (same bar P4 refits under).
+# it may be proposed at all (the refit bar).
 MIN_PRECISION = 0.95
 # Fewer labels than this -> warn and keep collecting; no proposal for that knob.
 MIN_LABELS = 20
@@ -68,11 +68,11 @@ MIN_LABELS = 20
 # that still clears MIN_PRECISION with at least MIN_LABELS rows, so acting
 # coverage is maximized subject to the precision bar.
 CANDIDATE_THRESHOLDS = [round(0.05 * i, 2) for i in range(1, 20)]  # 0.05 .. 0.95
-# Temperature fit scan (identical grid to eval/phase4_recalibrate.py).
+# Temperature fit scan (identical grid to the refit harness).
 TEMPERATURE_GRID = [round(0.05 * i, 2) for i in range(2, 61)]  # 0.10 .. 3.00
 ECE_BINS = 10
 
-# Env knob: the human-set promotion switch (P4.5 T4). Shadow runs happen with
+# Env knob: the human-set promotion switch. Shadow runs happen with
 # it unset; setting it to "1"/"yes"/"signoff" is the recorded human decision
 # that allows a LOOSENING promotion through promote().
 ENV_PROMOTION_SIGNOFF = "JEV_PROMOTION_SIGNOFF"
@@ -88,7 +88,7 @@ UNRESOLVED = "unresolved"
 # proposed automatically -- it would need a labeled read-only tap corpus.
 
 
-# ---- segment tagging (P4.5 T2) ----------------------------------------------------
+# ---- segment tagging ---------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -137,7 +137,7 @@ def segment_of(segments: dict[str, Segment], call_id: str | None) -> str:
     return UNRESOLVED
 
 
-# ---- window selection (P4.5 T1) ----------------------------------------------------
+# ---- window selection ---------------------------------------------------------------
 
 
 def window_cutoff(now: datetime, *, window_days: int = WINDOW_DAYS) -> datetime:
@@ -152,7 +152,7 @@ def select_window(rows: list[dict], *, now: datetime | None = None,
     MIN_WINDOW_ROWS floor is met. Rows carry their own timestamps; the job is
     offline and deterministic for a given journal snapshot."""
     decisions = [row for row in rows if row.get("type") == "decision"]
-    # P5 shadow rows (engine=laya, shadow_of set) are NOT primary decisions:
+    # Shadow rows (engine=laya, shadow_of set) are NOT primary decisions:
     # they must never enter the calibration window as laya observations, or a
     # jev-primary session's shadowed traffic would masquerade as laya runtime
     # mixture. Excluding rows only shrinks the sample -- never loosens a gate.
@@ -191,8 +191,8 @@ def _row_ts(row: dict) -> datetime:
 
 # ---- labeling: journal rows -> (signal value, boolean label) -----------------------
 # The tap/mutation case tables are the dev-tap ground truth captured by the
-# calibrate CLIs (mirrored from eval/phase4_recalibrate.py -- the P4 harness
-# this module must match). Labels key on the exact state fields the CLIs asked
+# calibrate CLIs (mirrored from eval/phases/recalibrate_thresholds.py, which
+# keeps them in lockstep). Labels key on the exact state fields the CLIs asked
 # with, so only genuinely-labeled rows are scored; everything else is skipped.
 
 GATE_NOUL_CASES = [
@@ -271,7 +271,7 @@ def _labeled_fit_nouls(row: dict) -> list[tuple[float, bool]]:
 def _labeled_choice_pick(row: dict) -> dict | None:
     """A choice row with judgeable ground truth -> {signal values, correct}.
     Sweep chunks that cannot hold the truth carry no pick-precision information
-    and are skipped; kind picks are dev-verified live (P2 smoke: every kind
+    and are skipped; kind picks are dev-verified live (smoke runs: every kind
     pick matched device truth), so the pick itself is its own label."""
     state, answers = row.get("state") or {}, row.get("answers") or {}
     goal = state.get("goal")
@@ -302,7 +302,7 @@ def _labeled_choice_pick(row: dict) -> dict | None:
                 NONE_OF_THESE if choice == NONE_OF_THESE else WRONG)}
 
 
-# ---- metrics (same definitions as eval/phase4_recalibrate.py) ----------------------
+# ---- metrics (same definitions as the refit harness) ---------------------------------
 
 
 def ece(probabilities: list[float], labels: list[bool], bins: int = ECE_BINS) -> float:
@@ -331,7 +331,7 @@ def logloss(probabilities: list[float], labels: list[bool], eps: float = 1e-6) -
 def fit_temperature(vectors: list[tuple[dict[str, float], str]],
                     ts: list[float] | None = None) -> float | None:
     """1-D NLL scan over T (p^(1/T) renormalization; each row its own vector).
-    Identical to eval/phase4_recalibrate.fit_temperature."""
+    Identical to the refit harness's fit_temperature."""
     if not vectors:
         return None
     best_t, best_nll = None, math.inf
@@ -399,7 +399,7 @@ class SignalStats:
     def sweep(self, *, min_precision: float = MIN_PRECISION, min_labels: int = MIN_LABELS,
               values: list[float] | None = None) -> None:
         """Loosest acting threshold clearing precision on >= min_labels rows.
-        Rows below the floor are WARN-and-keep-collecting (P4's rule): no
+        Rows below the floor are WARN-and-keep-collecting: no
         proposal is emitted for thin samples."""
         if self.n < min_labels:
             self.warn = f"n={self.n} < {min_labels} -- no proposal (keep collecting)"
@@ -459,7 +459,7 @@ def build_signals(rows: list[dict], segments: dict[str, Segment]) -> dict[str, S
     return stats
 
 
-# ---- proposal classification + tighten-only promotion (P4.5 T3/T4) ------------------
+# ---- proposal classification + tighten-only promotion --------------------------------
 
 TIGHTEN = "tighten"
 LOOSEN = "loosen"
@@ -479,14 +479,14 @@ KNOB_SIGNAL: dict[str, str] = {field: signal for signal, field in KNOB_FIELD.ite
 
 @dataclass(frozen=True)
 class Proposal:
-    """Provenance-tagged proposed profile values for ONE engine (P4.5 T1 'done
+    """Provenance-tagged proposed profile values for ONE engine (the 'done
     when'). Not applied by the sweep -- shadow-run first, promote explicitly."""
 
     engine: str
     values: dict[str, float]                  # knob -> proposed value
     evidence: dict[str, SignalStats]          # signal -> the labeled sample behind each knob
     provenance: dict                          # window, n, engine/model revision, per-signal n
-    temperature: float | None = None          # fitted temp_choice (recorded; runtime application is a P6-scale decision)
+    temperature: float | None = None          # fitted temp_choice (recorded; runtime application is a separate decision)
     shadow: dict | None = None                # per-knob incumbent-vs-proposed verdicts (T3)
     human_signoff: bool = False               # set ONLY by the recorded human promotion decision
 
@@ -529,7 +529,7 @@ def promote(current: BudgetProfile, proposal: Proposal) -> BudgetProfile:
     """Promotion = apply (tighten-only unless sign-off) + provenance check. A
     promotion or a documented non-promotion lands in LOGBOOK.md with the
     proposal's provenance; the promoted profile is what current_profile()
-    returns once wired in (a config edit -- the P4 structure)."""
+    returns once wired in (a config edit)."""
     if not proposal.provenance.get("effective_span_days") and not proposal.provenance.get("window_days_requested"):
         raise PromotionError("refusing to promote without window provenance")
     return apply_proposal(current, proposal)
@@ -550,7 +550,7 @@ def _verdict(values: list[float], labels: list[bool], t: float) -> dict:
 
 def shadow_compare(incumbent: BudgetProfile, proposed_values: dict[str, float],
                    stats: dict[str, SignalStats]) -> dict:
-    """P4.5 T3: proposed thresholds never auto-apply -- they shadow-run against
+    """Proposed thresholds never auto-apply -- they shadow-run against
     the incumbent on the SAME labeled window rows, and the journal records BOTH
     verdicts (per-knob aggregates + the flip counts; the full sample is the
     proposal's evidence)."""
@@ -601,7 +601,7 @@ def persist(journal_dir: Path | None, provenance: dict,
     return path
 
 
-# ---- conformal option (P4.5 T5 research spike) --------------------------------------
+# ---- conformal option (research spike) ----------------------------------------------
 
 CONFORMAL_ALPHA = 0.05   # target: bad outcomes <= 5% of approved rows (the 0.95 bar, restated)
 ACI_GAMMA = 0.01         # online update step for alpha
@@ -649,7 +649,7 @@ def aci_update(values: list[float], labels: list[bool], *, alpha: float = CONFOR
 
 
 def conformal_spike(stats: dict[str, SignalStats], *, alpha: float = CONFORMAL_ALPHA) -> dict:
-    """T5 spike: would conformal thresholds + ACI beat the fitted/incumbent
+    """Spike: would conformal thresholds + ACI beat the fitted/incumbent
     points on this window? Adopt ONLY if the realized bad rate beats the bar
     AND approval mass is not starved AND there are enough labels; otherwise the
     verdict is 'keep' with the reason recorded (report lands in the logbook)."""
@@ -709,7 +709,7 @@ def run(journal_dir: Path | None = None, *, engine: str = "laya",
         "engine": engine,
         "n_engine": len(engine_rows),
         "model_revision": _revision(engine_rows),
-        "question_set": "runtime-unversioned (pre-P6 compile; phrasings frozen)",
+        "question_set": "runtime-unversioned",
         "journal_dir": str(directory),
         "generated_at": (now or datetime.now()).isoformat(timespec="seconds"),  # noqa: DTZ005
         "segments": {},
@@ -744,7 +744,7 @@ def run(journal_dir: Path | None = None, *, engine: str = "laya",
         temperature = fit_temperature(vectors)
         print(f"temp_choice proposal: T={temperature} on {len(vectors)} judgeable vectors "
               "(recorded in provenance; applying a temperature rescales every signal -- "
-              "P6-scale decision, not part of tighten-only promotion)")
+              "separate decision, not part of tighten-only promotion)")
     else:
         print(f"temp_choice: {len(vectors)} judgeable vectors < {MIN_LABELS} -- no fit (keep collecting)")
 
@@ -769,7 +769,7 @@ def run(journal_dir: Path | None = None, *, engine: str = "laya",
             proposed[knob] = signal.proposed_threshold
     provenance["per_signal_n"] = {name: signal.n for name, signal in stats.items()}
 
-    # T5 spike: conformal thresholds + ACI vs the fitted points, same window.
+    # Spike: conformal thresholds + ACI vs the fitted points, same window.
     spike = conformal_spike(stats)
     provenance["conformal_spike"] = spike
     print("\n== conformal/ACI spike (T5) ==")
@@ -808,7 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     apply = "--apply" in argv
     argv = [a for a in argv if a != "--apply"]
     directory = Path(argv[0]) if argv else None
-    proposal = run(directory)  # the loop's subject engine: laya (P4's profile knobs)
+    proposal = run(directory)  # the loop's subject engine: laya
     if proposal is None:
         return 0
     if apply:

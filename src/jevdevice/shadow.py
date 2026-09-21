@@ -1,4 +1,4 @@
-"""P5 shadow mode: while the primary engine answers live traffic, a second
+"""Shadow mode: while the primary engine answers live traffic, a second
 engine observes the exact same (state, questions) and journals its answers --
 and nothing else. Shadow answers are NEVER returned to a caller, NEVER
 executed, and NEVER read by the gate: the only thing that escapes _observe()

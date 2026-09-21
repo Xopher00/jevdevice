@@ -61,7 +61,7 @@ class LayaClient(JevClient):
     offline) inside a worker thread so the event loop never blocks. Concurrent
     asks serialize on one lock: laya's Agent is not documented as thread-safe,
     and one forward pass is shorter than any retry would be. Real concurrent
-    asks (P5's shadow mode) are gated behind the JEV_SHADOW_MODE knob, whose
+    asks (shadow mode) are gated behind the JEV_SHADOW_MODE knob, whose
     default "after" keeps the primary ask's latency untouched; "concurrent"
     overlaps shadow and primary, still serialized on _ask_lock between
     themselves.
@@ -131,7 +131,7 @@ class LayaClient(JevClient):
         the option block -- surfaces as JevError like every other
         engine failure; the message may blame head_max_len even when max_len
         was the trigger, so catch the type, never parse the text.
-        shadow_of (P5): set only by the shadow observer -- links this row back
+        shadow_of: set only by the shadow observer -- links this row back
         to the primary jev row's call_id; primary asks never set it."""
         if not questions:
             raise JevError("ask() requires at least one question")

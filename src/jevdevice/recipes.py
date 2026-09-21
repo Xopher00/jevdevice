@@ -1,16 +1,15 @@
-"""Recipe store (P7.5 T1): goal-level verified chains aggregated from the
+"""Recipe store: goal-level verified chains aggregated from the
 decision journal by goal_id.
 
-A recipe is the SkillX-compressed, verified step chain of one goal -- the
-chain that reached a device-verified outcome, NOT the journey that got there:
-dead-end and backtracking steps (failed/escalated attempts, retried duplicates)
-are compressed out before storing. Every step still carries its own goal text
-and kind, so replaying a recipe re-grounds each step's slots (element, service,
-package) through the normal propose/narrow/gate path -- the judge fills the
-variable slots; the recipe only fixes WHICH kinds run in WHICH order. Zero
-free-form plan generation lives here: a recipe is captured, never invented.
+A recipe is the verified step chain of one goal: only the steps that
+reached a device-verified outcome, with dead-end and backtracking attempts
+(failed tries, retried duplicates) removed before storing. Every step carries
+its own goal text and kind, so replaying re-grounds each step's slots
+(element, service, package) through the normal propose/narrow/gate path --
+the recipe only fixes WHICH kinds run in WHICH order. A recipe is captured
+from the journal, never invented.
 
-Retrieval is by goal-shape embedding: a deterministic hashed bag-of-tokens
+Retrieval is by goal-text similarity: a deterministic hashed token-count
 (unigrams + bigrams, sha256-bucketed, L2-normalized) of the goal text -- no
 model, no network, reproducible across sessions. Cosine similarity >=
 RETRIEVAL_FLOOR (a named knob, tunable on dev-half evidence only) counts as a
@@ -40,7 +39,7 @@ ENV_RECIPES_DIR = "JEV_RECIPES_DIR"
 RECIPES_FILE = "recipes.json"
 
 EMBED_DIM = 128          # hashed bag-of-tokens dimensionality
-RETRIEVAL_FLOOR = 0.55   # min cosine similarity for a T0 recipe hit (dev-half tuning knob)
+RETRIEVAL_FLOOR = 0.55   # min cosine similarity for a recipe hit (tunable on dev data)
 MAX_CHAIN_GAP_S = 1800   # a chain is one run: rows farther apart than this are separate sessions
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -53,7 +52,7 @@ def _parse_ts(value: str) -> datetime | None:
         return None
 
 
-# --- goal-shape embedding -----------------------------------------------------
+# --- goal-text embedding --------------------------------------------------------
 
 def embed(text: str) -> list[float]:
     """Deterministic hashed bag-of-tokens embedding (unigrams + bigrams).
@@ -103,7 +102,7 @@ class Recipe:
         return cls(**data)
 
 
-# --- journal -> recipes (SkillX compression) ----------------------------------
+# --- journal -> recipes (dead-end/backtracking removal) ------------------------
 
 def _final_chain(rows: list[dict]) -> list[dict]:
     """The final run's rows: everything in the last session-window that closes
@@ -125,9 +124,9 @@ def _final_chain(rows: list[dict]) -> list[dict]:
 
 
 def _compress(steps: list[RecipeStep]) -> list[RecipeStep]:
-    """SkillX: a repeated (kind, command) compresses to its LAST occurrence
-    (the earlier one was a backtrack), and the result keeps last-occurrence
-    order. Dead ends never reach here: only verified rows enter the chain."""
+    """A repeated (kind, command) compresses to its LAST occurrence (the
+    earlier one was a backtrack), keeping last-occurrence order. Only
+    verified rows enter the chain, so dead ends never reach here."""
     kept: list[RecipeStep] = []
     for i, step in enumerate(steps):
         if any(later.kind == step.kind and later.command == step.command for later in steps[i + 1:]):
@@ -137,10 +136,10 @@ def _compress(steps: list[RecipeStep]) -> list[RecipeStep]:
 
 
 def recipes_from_journal(journal, *, heldout_goal_ids: frozenset[str] = frozenset()) -> dict[str, Recipe]:
-    """Every derivable recipe, keyed by goal_id. Outcome rows carry the recipe
-    primitives (kind/graph_edge/command/joined call_ids); decision rows are not
-    needed. Raises ValueError if a held-out goal would enter the store -- the
-    split is sacred, and a recipe IS training data."""
+    """Every derivable recipe, keyed by goal_id. Outcome rows carry what a
+    step needs (kind, graph_edge, command, call_id); decision rows are not
+    read. Raises ValueError if a held-out goal would enter the store: a
+    recipe is training data and the dev/held-out split must hold."""
     by_goal: dict[str, list[dict]] = {}
     goal_text: dict[str, str] = {}
     for row in journal.replay():
@@ -203,7 +202,7 @@ def _store_path(directory: Path | str | None = None) -> Path:
 
 
 class RecipeStore:
-    """JSON-file store of recipes keyed by goal_id, with goal-shape retrieval.
+    """JSON-file store of recipes keyed by goal_id, retrieved by goal-text
     File format versioned implicitly by the Recipe fields; unknown/extra fields
     raise on load (fail-closed, like the question sets)."""
 
@@ -230,7 +229,7 @@ class RecipeStore:
         self.path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     def best_match(self, goal_text: str, floor: float = RETRIEVAL_FLOOR) -> tuple[Recipe, float] | None:
-        """Nearest recipe by goal-shape embedding cosine, above the floor."""
+        """Nearest recipe by goal-text cosine similarity, above the floor."""
         query = embed(goal_text)
         best: tuple[float, Recipe] | None = None
         for recipe in self._recipes.values():
@@ -244,7 +243,7 @@ class RecipeStore:
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI
     """`python -m jevdevice.recipes list` / `match "goal text"`. Building from
-    the journal is an eval-script job (eval/phase75_build_recipes.py) because
+    the journal is an eval-script job (eval/phases/build_recipes.py) because
     the dev/held-out split guard needs eval/goals.yaml."""
     import sys
 

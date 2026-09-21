@@ -1,9 +1,9 @@
-"""P7 T2 — failure mining: escalation states are off-trajectory states, and a
-recovery that completes the goal afterwards is a (broken state → recovery
-action) pair — the supervision SGCD-style training loses on (loss on the
-recovery actions only; the broken prefix is context, not supervision).
+"""Failure mining: an escalation is an off-trajectory state, and a recovery
+that completes the goal afterwards is a (broken state → recovery action)
+pair. Training loses on the recovery actions only; the broken prefix is
+context, not supervision.
 
-Offline and journal-only (zero model calls, the P4.5 pattern):
+Offline and journal-only (zero model calls):
 
   - trajectories = primary journal rows grouped by goal_id, ts-ordered
   - failure = an outcome row with verification escalated/failed/none
@@ -15,7 +15,7 @@ Offline and journal-only (zero model calls, the P4.5 pattern):
 Dev-half only: goal texts are asserted absent from the held-out half (the
 harness only ever runs dev goals; this is a second guard, not a license).
 
-  uv run python eval/phase7_mine_failures.py [journal_dir]
+  uv run python eval/phases/mine_recoveries.py [journal_dir]
 """
 
 from __future__ import annotations
@@ -25,23 +25,21 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
 from jevdevice.decision_log import ESCALATED, FAILED, NONE, VERIFIED, DecisionJournal
 
-OUT_FILE = REPO / "eval" / "phase7_flywheel" / "recovery_pairs.jsonl"
+OUT_FILE = REPO / "eval" / "phases" / "flywheel" / "recovery_pairs.jsonl"
 MAX_CHAIN_CALL_IDS = 20  # per side of the pair; bounded, named knob
 
 FAILURE_VERIFICATIONS = frozenset({ESCALATED, FAILED, NONE})
 
 
 def heldout_goals() -> set[str]:
-    import yaml
+    """Held-out goal texts (casefolded for matching), from the frozen split."""
+    import splitguard
 
-    raw = yaml.safe_load((REPO / "eval" / "goals.yaml").read_text())
-    return {e["goal"].casefold() for section in ("pc_questions", "phone_questions", "phone_actions")
-            for e in raw.get(section, []) if e["split"] == "heldout"}
+    return {e["goal"].casefold() for e in splitguard.heldout_goals()}
 
 
 def _ts(row: dict) -> str:

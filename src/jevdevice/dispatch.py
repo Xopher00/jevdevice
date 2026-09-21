@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from . import question_sets
+from . import outcomes, question_sets
 from .app_launch import launch_app_for_goal
 from .budget import choice_criteria, current_profile, is_abstain
 from .common import bootstrap, gated
-from .decision_log import goal_scope
+from .decision_log import ESCALATED, goal_scope
 from .elements import dump_screen, screen_summary
 from .gate import CommandVariant, confirm_with_human
 from .jev import JevClient
@@ -217,10 +218,9 @@ async def _run_toolkit_scoped(jev: JevClient, transport: AdbTransport, goal: str
 
 
 # --- shared response builders ------------------------------------------------
-# The dict-response half of the dispatch (P7.5: moved out of mcp_server so the
-# MCP server and the planner render the same outcome identically instead of
-# drifting). Each builder takes (outcome, engine_name) -- only the gate-profile
-# comparisons actually need the engine; the rest ignore it.
+# The dict-response half of the dispatch: one builder per kind's outcome, so
+# every caller renders the same outcome identically. Only the gate-profile
+# comparisons need the engine; the rest ignore it.
 
 
 def _toggle_response(outcome, engine_name: str) -> dict:
@@ -302,8 +302,8 @@ RESPONSE_FOR = {
 
 
 def response_for(kind: str, outcome, engine_name: str) -> dict:
-    """One response dict per kind's outcome -- the single table both the MCP
-    server and the P7.5 planner render through."""
+    """One response dict per kind's outcome -- the single table every
+    caller (MCP server, planner) renders through."""
     return RESPONSE_FOR[kind](outcome, engine_name)
 
 
@@ -317,6 +317,121 @@ def call_id_of(proposal) -> str | None:
     if pending is not None and pending.gate_result is not None:
         return pending.gate_result.call_id
     return None
+
+
+# --- one atomic action, one shared execution path -----------------------------
+# Both real callers (the MCP server and the planner) run actions through
+# run_kind: propose -> gate -> execute, bracketed with a graph_edge, outcome
+# row journaled with the kind that ran. The only caller-specific part is what
+# happens to a needs_approval verdict, passed as `on_pending`.
+
+
+async def _run_ungated(
+    jev, transport, kind: str, goal: str, *, direction: str, max_attempts: int,
+    tier: int | None, recipe_id: str | None,
+) -> dict:
+    """The read-side kinds: no command gate (nothing mutates), but the same
+    outcome-row journaling so trajectories join by call_id like every other
+    kind. open_app/scroll_to_find change the screen, so they carry a
+    graph_edge; dumpsys/screenshot are read-only and carry none."""
+    if kind == "open_app":
+        before = await outcomes.foreground_safe(transport)
+        result = await launch_app_for_goal(jev, transport, goal, verbose=False)
+        response = response_for(kind, result, jev.engine_name)
+        # The launch verification already proved the foreground package; ride
+        # that device truth instead of paying a second dump when it ran.
+        after = result.package if result.launched and result.package else await outcomes.foreground_safe(transport)
+        edge = {"from_node": before, "to_node": after} if (before or after) else None
+        outcomes.emit_outcome(
+            transport=transport, call_id=result.call_id,
+            executed_command=f"monkey -p {result.package} 1" if result.package else None,
+            verification=outcomes.verification_from_response(response), response=response,
+            kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
+        )
+        return response
+    if kind == "dumpsys":
+        result = await run_dumpsys_query(jev, transport, goal, verbose=False)
+        response = response_for(kind, result, jev.engine_name)
+        outcomes.emit_outcome(
+            transport=transport, call_id=result.call_id,
+            executed_command=f"dumpsys {result.service}" if result.service else None,
+            verification=outcomes.verification_from_response(response), response=response,
+            kind=kind, tier=tier, recipe_id=recipe_id,
+        )
+        return response
+    if kind == "scroll_to_find":
+        before = await outcomes.foreground_safe(transport)
+        result = await scroll_to_find(jev, transport, goal, direction=direction, max_attempts=max_attempts, verbose=False)
+        response = response_for(kind, result, jev.engine_name)
+        after = await outcomes.foreground_safe(transport)
+        edge = {"from_node": before, "to_node": after} if (before or after) else None
+        outcomes.emit_outcome(
+            transport=transport, call_id=result.call_id,
+            executed_command=result.executed[-1] if result.executed else None,
+            verification=outcomes.verification_from_response(response), response=response,
+            executed=list(result.executed), kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
+        )
+        return {**response, "executed": list(result.executed)}
+    if kind == "screenshot":
+        response = {"status": "ok"}
+        outcomes.emit_outcome(
+            transport=transport, call_id=None, executed_command="screencap -p",
+            verification=outcomes.verification_from_response(response), response=response,
+            kind=kind, tier=tier, recipe_id=recipe_id,
+        )
+        return response
+    raise KeyError(f"not an ungated kind: {kind!r}")
+
+
+async def run_kind(
+    jev, transport, kind: str, goal: str, *, verify: bool = True, auto_approve: bool = False,
+    direction: str = "down", max_attempts: int = 8,
+    on_pending: Callable[..., Awaitable[dict] | dict] | None = None,
+    tier: int | None = None, recipe_id: str | None = None,
+) -> dict:
+    """Run exactly ONE atomic action of one kind end to end: propose -> gate
+    -> execute (bracketed with a graph_edge) -> journal the outcome row with
+    the kind that ran. Returns the response dict.
+
+    A needs_approval verdict never executes here. `on_pending` receives
+    (goal, kind, resume_arg, confidence, pending, verify) and returns the
+    response to surface (the MCP server stores the pending action for
+    device_approve); with no hook the verdict is returned as an escalation.
+    `auto_approve` decides a needs_approval verdict for this call only -- a
+    DENIED command still stops the action, same invariant as everywhere else.
+    tier/recipe_id stamp planner-driven rows (None on ordinary rows)."""
+    handler = KIND_TABLE.get(kind)
+    if handler is None:
+        return await _run_ungated(jev, transport, kind, goal, direction=direction,
+                                  max_attempts=max_attempts, tier=tier, recipe_id=recipe_id)
+    t0 = time.monotonic()
+    proposal = await handler.propose(jev, transport, goal)
+    call_id = call_id_of(proposal)
+    command = proposal.ready
+    if command is None and proposal.pending is not None:
+        if auto_approve:
+            command = proposal.pending.command
+        elif on_pending is not None:
+            outcomes.emit_outcome(transport=transport, call_id=call_id, verification=ESCALATED,
+                                  status="needs_approval", kind=kind, tier=tier, recipe_id=recipe_id)
+            return await on_pending(goal, kind, handler.resume_arg(proposal),
+                                    getattr(proposal, "confidence", 0.0), proposal.pending, verify)
+    if command is None:
+        outcomes.emit_outcome(transport=transport, call_id=call_id, verification=ESCALATED,
+                              status="escalated", kind=kind, tier=tier, recipe_id=recipe_id)
+        return {"status": "escalated", "reasons": list(proposal.reasons)}
+    outcome, edge = await outcomes.graph_edge_around(
+        transport, lambda: handler.execute(jev, transport, goal, proposal, command, verify=verify, verbose=False),
+    )
+    response = response_for(kind, outcome, jev.engine_name)
+    outcomes.emit_outcome(
+        transport=transport, call_id=call_id, executed_command=command.command,
+        verification=outcomes.verification_from_response(response), response=response,
+        kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
+    )
+    if kind in ("tap", "long_press", "type_text"):
+        response = {**response, "elapsed_s": round(time.monotonic() - t0, 2)}
+    return response
 
 
 async def main() -> None:

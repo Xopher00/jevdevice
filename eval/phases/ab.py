@@ -1,13 +1,13 @@
-"""P5 T3 — dev-half A/B through both engines (the M1 template: success rate,
-judge calls/goal, p50/p95 latency). Dev-split goals ONLY (eval/goals.yaml is
-filtered to split=dev; held-out stays untouched until the flip is final).
+"""Dev-half A/B through both engines: success rate, judge calls/goal,
+p50/p95 latency per goal. Dev-split goals only (eval/goals.yaml); the
+held-out half stays untouched until the engine decision is final.
 
 Two modes (a subprocess per engine, because the engine client is constructed
 at import of mcp_server and one process can only ever be one engine):
 
-  uv run python eval/phase5_ab.py run --engine jev   # on-device worker; JSONL to stdout
-  uv run python eval/phase5_ab.py run --engine laya
-  uv run python eval/phase5_ab.py scorecard jev.jsonl laya.jsonl   # offline, journal-only
+  uv run python eval/phases/ab.py run --engine jev   # on-device worker; JSONL to stdout
+  uv run python eval/phases/ab.py run --engine laya
+  uv run python eval/phases/ab.py scorecard jev.jsonl laya.jsonl   # offline, journal-only
 
 Worker success rule (unattended): status "ok" == success. Anything else —
 "escalated", "needs_approval", "unverified", "error" — is a failure, because
@@ -22,30 +22,27 @@ import asyncio
 import json
 import os
 import statistics
-import sys
 import time
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
 
 def dev_phone_goals() -> list[dict]:
     """Dev-half, phone-family goals (this device is a phone; pc_* belongs to
     the PC family). Guarded: a held-out id reaching this list is a hard error."""
-    import yaml
+    import splitguard
 
-    raw = yaml.safe_load((REPO / "eval" / "goals.yaml").read_text())
-    goals = [g for section in ("phone_questions", "phone_actions") for g in raw[section]]
-    dev = [g for g in goals if g["split"] == "dev"]
-    assert dev and all(g["split"] != "heldout" for g in dev), "dev filter failed"
-    return dev
+    goals = [g for family in ("phone_questions", "phone_actions")
+             for g in splitguard.dev_goals(family)]
+    splitguard.assert_dev_only(goals)
+    return goals
 
 
 async def run_worker(engine: str, only: list[str] | None = None) -> None:
     from jevdevice.common import load_env_file
 
-    load_env_file()  # BEFORE anything reads os.environ (common.SERIAL gotcha, P4)
+    load_env_file()  # before anything reads os.environ (common.SERIAL is read at import)
     assert os.environ.get("JEV_ENGINE", "jev") == engine, "parent must set JEV_ENGINE"
 
     from mcp.shared.memory import create_connected_server_and_client_session

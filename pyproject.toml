@@ -1,13 +1,12 @@
 [project]
 name = "jevdevice"
 version = "0.1.0"
-description = "MCP toolset: a small model structures messy device output and writes commands; Jev decides."
+description = "Android device automation over MCP: a typed judge engine picks one gated atomic action per goal, grounded in live screen state."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.10,<3",
     "httpx>=0.28,<1",
     "mcp>=1.0,<2",
-    "langgraph>=0.2,<1",
     "uiautomator2>=3.7.0",
     "adbutils[apk]>=2.12.0",
     "laya>=0.3.3",

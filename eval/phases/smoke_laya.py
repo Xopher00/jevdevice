@@ -1,8 +1,8 @@
-"""Phase 2 T6 — live smoke: 2-3 dev goals through the MCP tool surface with
-JEV_ENGINE=laya (no TYPESAFE key needed), then a journal replay of the rows
-those goals produced. Dev-split goals only (eval/goals.yaml).
+"""Live smoke: a few dev goals through the MCP tool surface with
+JEV_ENGINE=laya (no API key needed), then a journal replay of the rows those
+goals produced. Dev-split goals only (eval/goals.yaml).
 
-Run: ANDROID_SERIAL=<serial> JEV_ENGINE=laya uv run python eval/phase2_smoke.py
+Run: ANDROID_SERIAL=<serial> JEV_ENGINE=laya uv run python eval/phases/smoke_laya.py
 """
 
 from __future__ import annotations

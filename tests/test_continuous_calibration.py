@@ -355,10 +355,10 @@ def test_module_never_imports_an_engine() -> None:
 
 
 def _load_eval_harness():
-    path = Path(__file__).resolve().parent.parent / "eval" / "phase4_recalibrate.py"
+    path = Path(__file__).resolve().parent.parent / "eval" / "phases" / "recalibrate_thresholds.py"
     if not path.exists():
         pytest.skip("eval/phase4_recalibrate.py not present")
-    spec = importlib.util.spec_from_file_location("phase4_recalibrate_eval", path)
+    spec = importlib.util.spec_from_file_location("recalibrate_thresholds_eval", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

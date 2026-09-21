@@ -4,7 +4,7 @@ launch_app_for_goal directly on dev goals (pick_kind's own gate escalates
 separately) -- shows the retrieval shortlist, the chunked-sweep fallback,
 and the journal rows with option counts.
 
-Run: ANDROID_SERIAL=<serial> JEV_ENGINE=laya uv run python eval/phase3_budget_smoke.py
+Run: ANDROID_SERIAL=<serial> JEV_ENGINE=laya uv run python eval/phases/smoke_budget.py
 """
 
 from __future__ import annotations

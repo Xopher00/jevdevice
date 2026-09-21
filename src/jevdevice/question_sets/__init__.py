@@ -3,7 +3,7 @@ phrasing the golden path can ask.
 
 The phrasings are compiled artifacts under question_sets/v{N}.yaml: the
 journal is the golden set the compile step validates against
-(eval/phase6_compile_questions.py), and the runtime CONSUMES the frozen set
+(eval/phases/compile_questions.py), and the runtime CONSUMES the frozen set
 -- it never invents phrasings on the golden path.
 
 Two load-bearing rules:

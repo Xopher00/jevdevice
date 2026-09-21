@@ -117,7 +117,7 @@ class JevClient:
         # Journal rows carry engine+model_revision already; the ledger keeps the
         # same identity so token snapshots from both engines distinguish themselves.
         self.usage.record_engine(EngineInfo(engine="jev", model_revision=model))
-        # P5 shadow mode (shadow.py): a second engine observing this client's
+        # Shadow mode (shadow.py): a second engine observing this client's
         # asks. None here -- common.bootstrap() attaches via shadow.attach();
         # tests construct clients shadow-free.
         self.shadow = None

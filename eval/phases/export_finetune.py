@@ -14,7 +14,7 @@ Supervision labels (one of):
 Ground-truth sources (all dev-half derived; the heldout half of eval/goals.yaml
 is asserted absent from every exported row):
   1. dev_tap        -- the calibrate-CLI case tables (mirrored by
-                       eval/phase4_recalibrate.py; hand-labeled dev taps).
+                       eval/phases/recalibrate_thresholds.py; hand-labeled dev taps).
   2. live_verified  -- decision rows joined by call_id to a device-verified
                        outcome row whose executed_command == proposed_command.
   3. narrow_cases   -- round-1 sweep rows for goals whose correct candidate is
@@ -31,37 +31,33 @@ The Kaggle fine-tune script explodes each exported row into one training
 sequence per supervised question -- laya's build_sequence encodes ONE question
 per sequence, so supervision granularity is (state, question, label).
 
-Run: uv run python eval/phase6_export_finetune.py [journal_dir]
+Run: uv run python eval/phases/export_finetune.py [journal_dir]
 """
 
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import random
 import sys
 from collections import Counter
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
+
+# The label tables + matching logic come from the refit harness (single source
+# of truth, reused -- a drift-guard test pins the mirror copy).
+import recalibrate_thresholds as p4r
 
 from jevdevice.budget import NONE_OF_THESE
 from jevdevice.decision_log import DecisionJournal
 
-# the P4 label tables + matching logic: single source of truth, reused (not
-# copied -- a drift-guard test pins the mirror copy, this imports the original)
-_spec = importlib.util.spec_from_file_location("phase4_recalibrate", REPO / "eval" / "phase4_recalibrate.py")
-p4r = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(p4r)
-
-OUT_DIR = REPO / "eval" / "phase6_finetune"
+OUT_DIR = REPO / "eval" / "phases" / "finetune"
 
 # named knobs
 VAL_FRACTION = 0.1                  # goal-level hold-back for the fine-tune's own
                                     # val split (NOT the sacred goals.yaml heldout)
-SPLIT_SALT = "phase6-finetune-v1"   # changes the split; recorded in the card
+SPLIT_SALT = "phase6-finetune-v1"   # any change reshuffles the dev/val split; recorded in the card
 MAX_EXAMPLES_PER_PHASE: int | None = None  # balance-phase cap; None = no cap at current n
 SPOT_CHECK_N = 10                   # examples re-derived from the journal (acceptance spot-check)
 SPOT_CHECK_SEED = SPLIT_SALT
@@ -371,7 +367,7 @@ def main() -> int:
 
     provenance = Counter(e["provenance"] for e in examples)
     card = {
-        "generator": "eval/phase6_export_finetune.py",
+        "generator": "eval/phases/export_finetune.py",
         "journal_dir": str(journal.directory),
         "golden_set": "decision journal, dev-half only (heldout asserted absent; shadow_of rows excluded)",
         "n_examples": len(examples),

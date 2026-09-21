@@ -1,6 +1,8 @@
-"""Phase 0 T2 — live Laya fact battery, corrected forms (run 2). Scratch, no source changes.
+"""Live Laya fact battery: verify the runtime's assumptions about the
+laya package (construction forms, answer shapes, revision pinning) before
+any code depends on them. Scratch tooling; changes no source files.
 
-Run: uv run python eval/phase0_factcheck.py
+Run: uv run python eval/phases/laya_factcheck.py
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ results.append(fact("F1b Router().load('typed-decisions') cold load (from HF cac
 hub = pathlib.Path.home() / ".cache/huggingface/hub"
 snaps = list(hub.glob("models--convaiinnovations--laya/snapshots/*"))
 rev = snaps[0].name if snaps else "NOT-FOUND"
-results.append(fact("F1c HF revision on disk (snapshot commit, Phase 2 pins this)", True, rev))
+results.append(fact("F1c HF revision on disk (the backend pins this)", True, rev))
 
 # ---------------------------------------------------------------- F2/F3: system_one alias + state form + latency
 results.append(fact("F3 system_one alias on Router (same underlying function)",

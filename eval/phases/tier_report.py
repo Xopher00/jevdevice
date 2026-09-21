@@ -1,33 +1,29 @@
-"""P7.5 T4: per-tier telemetry from the journal -- journal-only, zero model
-calls, zero device. Every planner row carries additive `tier`/`recipe_id`
-fields, so the decomposition profile is a journal query.
+"""Per-tier planner telemetry from the journal -- journal-only, zero model
+calls, zero device. Every planner row carries `tier`/`recipe_id` fields, so
+the decomposition profile is a journal query.
 
-Output: eval/phase75_recipes/tier_report.json + stdout JSON:
-  per tier {0..4}: resolutions, fall-throughs, plus the step outcomes
-  (verified/failed/escalated/none/skipped) attributed to that tier's asks and
-  executions.
+Output: eval/phases/recipes/tier_report.json + stdout JSON: per tier,
+resolutions, fall-throughs, and the step outcomes attributed to that tier's
+executions.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
 from jevdevice.decision_log import DecisionJournal
 
-OUT_DIR = REPO / "eval" / "phase75_recipes"
+OUT_DIR = REPO / "eval" / "phases" / "recipes"
 PLANNER_STATUSES = {"planner_resolved", "planner_fallthrough", "cold_goal", "human_escalation"}
 
 
 def report(journal) -> dict:
     tier_events: dict[int, Counter] = {tier: Counter() for tier in range(5)}
     step_outcomes: dict[int, Counter] = {tier: Counter() for tier in range(5)}
-    recipe_ids: set[str] = set()
     goals_seen: set[tuple] = set()
     for row in journal.replay():
         if row.get("type") != "outcome":
@@ -38,7 +34,6 @@ def report(journal) -> dict:
             continue  # an ordinary action row (tier absent = not planner-driven)
         if tier is None:
             tier = 0
-        recipe_ids.add(row.get("recipe_id")) if row.get("recipe_id") else None
         if status in PLANNER_STATUSES:
             tier_events[tier][status] += 1
             if row.get("goal"):
@@ -56,7 +51,6 @@ def report(journal) -> dict:
             }
             for tier in range(5)
         },
-        "recipes_replayed": sorted(recipe_ids),
         "goals_seen": len(goals_seen),
     }
 

@@ -1,4 +1,4 @@
-"""P7 T1 — replay-with-perturbation harness (the data flywheel's engine).
+"""Replay-with-perturbation harness for trajectory collection.
 
 Warm paths generate no data (cache hits skip the judge) and a static goal list
 overfits the exact wording it was verified on, so every verified run here is a
@@ -9,18 +9,18 @@ trajectory and every failure is a recovery-pair candidate:
   - different starting apps / pre-broken states (each setup is itself a DEV goal
     run through the same gated device_do path -- the harness executes nothing
     outside the gate, ever)
-  - one subprocess per goal with a hard timeout (P5 lesson: a single sweep
-    goal can cost 461 s; an unattended batch must never hang on one run)
+  - one subprocess per goal with a hard timeout (a single sweep goal can
+    cost minutes; an unattended batch must never hang on one run)
 
-Unattended rules (P5, load-bearing): status "ok" == success, escalations are
+Unattended rules (load-bearing): status "ok" == success, escalations are
 failures, device_approve is NEVER called, gates stay fail-closed, shadow off.
 
 Dev-half data only: every goal text is asserted absent from the held-out half.
 
-  uv run python eval/phase7_harness.py plan
-  uv run python eval/phase7_harness.py run [--limit N] [--ids id ...]
-  uv run python eval/phase7_harness.py run-one --goal "..." [--variant v]
-  uv run python eval/phase7_harness.py report
+  uv run python eval/phases/perturbation_harness.py plan
+  uv run python eval/phases/perturbation_harness.py run [--limit N] [--ids id ...]
+  uv run python eval/phases/perturbation_harness.py run-one --goal "..." [--variant v]
+  uv run python eval/phases/perturbation_harness.py report
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
-import importlib.util
 import json
 import os
 import subprocess
@@ -37,20 +36,17 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
-# the P5 dev-goal loader: single source of truth, reused (not copied)
-_spec = importlib.util.spec_from_file_location("phase5_ab", REPO / "eval" / "phase5_ab.py")
-p5 = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(p5)
+# The dev-goal loader lives in ab.py (single source of truth, reused).
+from ab import dev_phone_goals as p5_dev_phone_goals
 
-FLYWHEEL_DIR = REPO / "eval" / "phase7_flywheel"
+FLYWHEEL_DIR = REPO / "eval" / "phases" / "flywheel"
 RUNS_FILE = FLYWHEEL_DIR / "runs.jsonl"
 TRAJECTORIES_FILE = FLYWHEEL_DIR / "trajectories.jsonl"
 
 # --- named knobs ----------------------------------------------------------------
-GOAL_TIMEOUT_S = 600          # per-run subprocess timeout (P5: sweeps cost minutes)
+GOAL_TIMEOUT_S = 600          # per-run subprocess timeout (sweep fallbacks cost minutes)
 SLEEP_BETWEEN_RUNS_S = 20     # rate limit: device-safe pacing between runs
 BATCH_SIZE = None             # max runs per `run` invocation (None = the whole plan)
 HELDOUT_GUARD_CASEFOLD = True # asserted on every plan build
@@ -104,7 +100,7 @@ def build_plan() -> list[dict]:
     choices key off the goal id's hash, not wall-clock randomness."""
     import yaml
 
-    dev_specs = p5.dev_phone_goals()
+    dev_specs = p5_dev_phone_goals()
     raw = yaml.safe_load((REPO / "eval" / "goals.yaml").read_text())
     heldout = {e["goal"].casefold() for section in ("pc_questions", "phone_questions", "phone_actions")
                for e in raw.get(section, []) if e["split"] == "heldout"}
@@ -183,7 +179,7 @@ async def run_one(goal: str, setup_ids: list[str]) -> dict:
 
     from jevdevice.common import load_env_file
 
-    load_env_file()  # BEFORE anything reads os.environ (common.SERIAL gotcha, P4)
+    load_env_file()  # before anything reads os.environ (common.SERIAL is read at import)
     assert os.environ.get("JEV_SHADOW", "0") == "0", "shadow must be off for harness runs"
     assert os.environ.get("JEV_ENGINE", "jev") == "jev", "the harness drives the recorded default engine"
 
@@ -193,7 +189,7 @@ async def run_one(goal: str, setup_ids: list[str]) -> dict:
     setup_statuses: list[dict] = []
     async with create_connected_server_and_client_session(mcp._mcp_server) as session:
         for setup_id in setup_ids:
-            specs = {s["id"]: s for s in p5.dev_phone_goals()}
+            specs = {s["id"]: s for s in p5_dev_phone_goals()}
             assert setup_id in specs, f"setup {setup_id} is not a dev phone goal"
             result = await session.call_tool("device_do", {"goal": specs[setup_id]["goal"], "auto_approve": False})
             payload = _payload_of(result)

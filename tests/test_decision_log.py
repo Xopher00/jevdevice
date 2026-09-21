@@ -273,18 +273,19 @@ def test_pending_action_carries_the_gate_call_id() -> None:
     mcp_server._store_pending("press 7", "tap", "element", 0.9, pending)
     stored = next(iter(mcp_server._PENDING.values()))
     assert stored.call_id == "cid-gate"
-    assert mcp_server._call_id_of(pending) == "cid-gate"
+    from jevdevice.dispatch import call_id_of
+    assert call_id_of(pending) == "cid-gate"
     assert mcp_server.PendingAction(goal="g", kind="tap", resume_arg=None, confidence=0.0,
                                     pending=pending).call_id is None  # backward compatible default
 
 
 def test_verification_mapping_from_response_status() -> None:
-    from jevdevice.mcp_server import _verification_from_response
-    assert _verification_from_response({"status": "ok"}) == "verified"
-    assert _verification_from_response({"status": "escalated"}) == "escalated"
-    assert _verification_from_response({"status": "unverified", "exit_code": 1}) == "failed"
-    assert _verification_from_response({"status": "unverified", "exit_code": 0}) == "none"
-    assert _verification_from_response({"status": "unverified"}) == "none"
+    from jevdevice.outcomes import verification_from_response
+    assert verification_from_response({"status": "ok"}) == "verified"
+    assert verification_from_response({"status": "escalated"}) == "escalated"
+    assert verification_from_response({"status": "unverified", "exit_code": 1}) == "failed"
+    assert verification_from_response({"status": "unverified", "exit_code": 0}) == "none"
+    assert verification_from_response({"status": "unverified"}) == "none"
 
 
 def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None:
@@ -292,10 +293,11 @@ def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None
 
     recorder = RecordingJournal()
     monkeypatch.setattr(decision_log, "_default_journal", recorder)
+    from jevdevice.outcomes import verification_from_response
     with goal_scope("press 7"):
         response = {"status": "ok", "satisfied": 0.97}
         mcp_server._emit_outcome(call_id="cid-gate", executed_command="input tap 5 700",
-                                 verification=mcp_server._verification_from_response(response),
+                                 verification=verification_from_response(response),
                                  response=response, decision="approve")
     row = recorder.outcomes[0]
     assert row["verification"] == "verified"

@@ -1,7 +1,7 @@
-"""The ungated-kind outcome-row coverage (P1 follow-up, landed P7): open_app,
-dumpsys, scroll_to_find and screenshot emit outcome rows joined by call_id --
-the same journal linkage the gated KIND_TABLE kinds already had. Narrowing
-verdicts carry the round-2 ground ask's call_id out to the outcome row.
+"""Ungated-kind outcome-row coverage: open_app,
+dumpsys, scroll_to_find and screenshot emit outcome rows joined by call_id,
+the same journal linkage the gated kinds already have. All four run through
+dispatch.run_kind, the one shared execution path.
 
 Nothing here touches a device or the network: handlers run against fakes,
 mcp_server is imported with placeholder env vars (same as test_decision_log).
@@ -181,15 +181,18 @@ class RecordingJournal:
 
 @pytest.fixture()
 def outcome_journal(monkeypatch):
-    from jevdevice import mcp_server
+    from jevdevice import decision_log
 
     recorder = RecordingJournal()
-    monkeypatch.setattr(mcp_server.decision_log, "get_journal", lambda: recorder)
+    monkeypatch.setattr(decision_log, "get_journal", lambda: recorder)
+    # no foreground dumps in these tests: the fake transports below carry no
+    # device, and the rows under test don't assert graph_edge anyway
+    monkeypatch.setenv("JEV_GRAPH_EDGE", "0")
     return recorder
 
 
 async def test_ungated_kinds_emit_outcome_rows(monkeypatch, outcome_journal):
-    from jevdevice import mcp_server
+    from jevdevice import dispatch, mcp_server
     from jevdevice.decision_log import VERIFIED
 
     async def fake_open(jev, transport, goal, *, verbose):
@@ -202,14 +205,15 @@ async def test_ungated_kinds_emit_outcome_rows(monkeypatch, outcome_journal):
         return ScrollToFindOutcome("text='Battery saver'", 2, call_id="cid-scroll",
                                    executed=("input swipe a", "input swipe b"))
 
-    monkeypatch.setattr(mcp_server, "launch_app_for_goal", fake_open)
-    monkeypatch.setattr(mcp_server, "run_dumpsys_query", fake_dumpsys)
-    monkeypatch.setattr(mcp_server, "scroll_to_find", fake_scroll)
+    monkeypatch.setattr(dispatch, "launch_app_for_goal", fake_open)
+    monkeypatch.setattr(dispatch, "run_dumpsys_query", fake_dumpsys)
+    monkeypatch.setattr(dispatch, "scroll_to_find", fake_scroll)
 
-    open_response = await mcp_server._do_open_app("open the calculator")
-    dump_response = await mcp_server._do_dumpsys("what is the battery level?")
-    scroll_response = await mcp_server._do_scroll_to_find("find battery saver")
-    screenshot_response = await mcp_server._do_screenshot("take a screenshot")
+    jev, transport = mcp_server.jev, mcp_server.transport
+    open_response = await dispatch.run_kind(jev, transport, "open_app", "open the calculator")
+    dump_response = await dispatch.run_kind(jev, transport, "dumpsys", "what is the battery level?")
+    scroll_response = await dispatch.run_kind(jev, transport, "scroll_to_find", "find battery saver")
+    screenshot_response = await dispatch.run_kind(jev, transport, "screenshot", "take a screenshot")
 
     rows = outcome_journal.outcomes
     assert [r["call_id"] for r in rows] == ["cid-open", "cid-dump", "cid-scroll", None]
@@ -230,14 +234,14 @@ async def test_ungated_kinds_emit_outcome_rows(monkeypatch, outcome_journal):
 
 
 async def test_ungated_escalations_emit_their_outcome_row_too(monkeypatch, outcome_journal):
-    from jevdevice import mcp_server
+    from jevdevice import dispatch, mcp_server
     from jevdevice.decision_log import ESCALATED
 
     async def fake_open(jev, transport, goal, *, verbose):
         return LaunchOutcome(None, 0.2, False, 0.0, 0, "", ("judge abstained",), call_id="cid-esc")
 
-    monkeypatch.setattr(mcp_server, "launch_app_for_goal", fake_open)
-    response = await mcp_server._do_open_app("open something unnameable")
+    monkeypatch.setattr(dispatch, "launch_app_for_goal", fake_open)
+    response = await dispatch.run_kind(mcp_server.jev, mcp_server.transport, "open_app", "open something unnameable")
     assert response["status"] == "escalated"
     row = outcome_journal.outcomes[0]
     assert row["call_id"] == "cid-esc"

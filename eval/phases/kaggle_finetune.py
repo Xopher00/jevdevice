@@ -1,7 +1,7 @@
 """Supervised fine-tune of laya-typed-decisions on the journal export.
 
 Runs on Kaggle (2xT4, ~4-5 h reference) -- NOTHING in this script touches the
-local device path; it consumes eval/phase6_finetune/{train,val}.jsonl from the
+local device path; it consumes eval/phases/finetune/{train,val}.jsonl from the
 dev-half journal export only. The sacred goals.yaml heldout half is never read.
 
 Input rows: {"state", "questions" (wire dicts), "supervision", ...}. Each row
@@ -28,11 +28,11 @@ against the new artifact before any threshold is trusted.
 
 Kaggle setup:
   !pip install -q laya
-  !python /kaggle/input/<dataset>/phase6_kaggle_finetune.py --train ... --val ...
+  !python /kaggle/input/<dataset>/kaggle_finetune.py --train ... --val ...
 
-Run locally (CUDA): uv run python eval/phase6_kaggle_finetune.py \
-    --train eval/phase6_finetune/train.jsonl --val eval/phase6_finetune/val.jsonl \
-    --base laya-typed-decisions --out eval/phase6_finetune/checkpoint
+Run locally (CUDA): uv run python eval/phases/kaggle_finetune.py \
+    --train eval/phases/finetune/train.jsonl --val eval/phases/finetune/val.jsonl \
+    --base laya-typed-decisions --out eval/phases/finetune/checkpoint
 """
 
 from __future__ import annotations

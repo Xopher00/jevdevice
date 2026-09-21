@@ -1,6 +1,5 @@
-"""Phase 4 perturbation tests (v2.1 acceptance): for a small set of labeled
-dev-tap questions, re-ask the laya engine with the question perturbed and
-measure answer drift. Three perturbations:
+"""Perturbation tests: for a small set of labeled dev-tap questions, re-ask
+the laya engine with the question perturbed and measure answer drift. Three perturbations:
 
   - shuffle   option order (choice questions only; a stable judge must be
               order-invariant)
@@ -8,14 +7,14 @@ measure answer drift. Three perturbations:
   - remove-evidence  drop the code-verified evidence fields (gate taps:
               target_bounds; narrowing: per-candidate descriptions)
 
-Drift means the question (or its evidence dependence) is fragile: fix before
-trusting any threshold fit on it. Question PHRASINGS are frozen until P6, so
-fragile wording is recorded as a P6 work item, never edited here.
+Drift means the question (or its evidence dependence) is fragile: fix it
+before trusting any threshold fit on it. Question phrasings are frozen in the
+artifact, so fragile wording is recorded as a work item, never edited here.
 
-Baseline answers come from the T1 CLI rows in the journal (same wording, no
-perturbation) -- this script only asks the perturbed variants.
+Baseline answers come from the calibration-CLI rows in the journal (same
+wording, no perturbation) -- this script only asks the perturbed variants.
 
-Run: JEV_ENGINE=laya uv run python eval/phase4_perturbations.py
+Run: JEV_ENGINE=laya uv run python eval/phases/perturbations.py
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ from jevdevice.laya_backend import LayaClient
 RNG = random.Random(4)  # deterministic shuffles, reproducible rows
 
 # narrowing round-2 taps: goal -> (correct-substring or None=absent, 20-option
-# candidate pool matching the T1 capture -- real device packages/services are
+# candidate pool matching the calibration capture -- real device packages/services are
 # pulled live so the shortlist is the same shape the CLI produced).
 NARROW_GOALS = [
     ("open Gmail", "gmail"),
@@ -181,7 +180,7 @@ async def main() -> int:
             print(f"  {'DRIFT' if drifted else 'stable'}\tkind {goal!r} {name}: {b:.3f} -> {p:.3f}")
 
     print(f"\ndrift rate: {drifts}/{total}")
-    print("fragile questions (P6 work items, wording frozen until then):")
+    print("fragile questions (recorded as work items; wording stays frozen):")
     for f in sorted(set(fragile)):
         print(f"  - {f}")
     await client.aclose()

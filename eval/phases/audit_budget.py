@@ -3,7 +3,7 @@ profile without a logged truncation? Reads stored journal rows only -- no
 model calls. Run after a device session (a day of rows makes this meaningful;
 a handful of smoke rows is still a real check of the plumbing).
 
-Run: uv run python eval/phase3_budget_audit.py [journal_dir]
+Run: uv run python eval/phases/audit_budget.py [journal_dir]
 """
 
 from __future__ import annotations

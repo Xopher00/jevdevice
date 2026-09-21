@@ -1,4 +1,4 @@
-"""P5 shadow mode: the second engine observes jev's asks, journals linked rows,
+"""Shadow mode: the second engine observes jev's asks, journals linked rows,
 and its answers never go anywhere. All unit-level: fakes for the HTTP path and
 the router (same shapes as test_decision_log / test_laya_backend), so nothing
 here touches the network or loads the checkpoint."""
@@ -222,7 +222,7 @@ async def test_aclose_drains_pending_shadow_tasks(monkeypatch) -> None:
     assert not [t for t in client.shadow_tasks if not t.done()]
 
 
-# --- the P4.5 window must never see shadow rows -------------------------------
+# --- the calibration window must never see shadow rows -------------------------
 
 def test_p45_window_excludes_shadow_rows() -> None:
     now = datetime.now().astimezone()  # tz-aware: row ts are tz-aware isoformat

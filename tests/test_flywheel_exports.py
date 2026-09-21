@@ -1,36 +1,27 @@
-"""Phase 7 flywheel: the perturbation plan (T1), failure mining (T2), and the
-training-format exporters (T3) — all tested offline on synthetic journals,
-zero model calls, zero device. The held-out guard and shadow exclusion are
-asserted where the real tooling enforces them."""
+"""The perturbation harness, failure mining, and training-format exporters --
+all tested offline on synthetic journals, zero model calls, zero device. The
+held-out guard and shadow exclusion are asserted where the real tooling
+enforces them."""
 
 from __future__ import annotations
 
-import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-sys_path = str(REPO / "src")
-if sys_path not in __import__("sys").path:
-    __import__("sys").path.insert(0, sys_path)
+PHASES = REPO / "eval" / "phases"
+if str(PHASES) not in sys.path:
+    sys.path.insert(0, str(PHASES))
+
+import export_flywheel as p7e
+import mine_recoveries as p7m
+import perturbation_harness as p7h
 
 from jevdevice.decision_log import DecisionJournal
 
-
-def _load(name: str, path: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-p7h = _load("phase7_harness", REPO / "eval" / "phase7_harness.py")
-p7m = _load("phase7_mine_failures", REPO / "eval" / "phase7_mine_failures.py")
-p7e = _load("phase7_export_flywheel", REPO / "eval" / "phase7_export_flywheel.py")
-
-
-# --- T1: perturbation plan -----------------------------------------------------
+# --- perturbation plan ------------------------------------------------
 
 def test_mutations_are_meaning_preserving_and_known_ids_fail_closed() -> None:
     assert p7h.apply_mutation("Open the Camera app.", "as_is") == "Open the Camera app."
@@ -114,7 +105,7 @@ def test_extract_trajectories_windows_rows_and_scores_verification(tmp_path: Pat
     assert trajectories2 == [] and status2["x"]["device_verified"] is False
 
 
-# --- T2: failure mining --------------------------------------------------------
+# --- failure mining: failure mining --------------------------------------------------------
 
 def _mine_journal(tmp_path: Path, goal: str) -> tuple[list[dict], dict]:
     from jevdevice.decision_log import goal_id_for
@@ -159,7 +150,7 @@ def test_mining_skips_unrecovered_failures_and_heldout(tmp_path: Path) -> None:
     assert dropped["heldout_goal"] == 1
 
 
-# --- T3: exporters -------------------------------------------------------------
+# --- exporters: exporters -------------------------------------------------------------
 
 def _rows_for_export(tmp_path: Path, goal: str) -> dict[str, list[dict]]:
     """A minimal journaled trajectory: kind decision -> outcome -> recovery."""

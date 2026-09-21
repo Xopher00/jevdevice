@@ -7,7 +7,7 @@ encoding and configured temperature the runtime sees) and compares:
   - decision quality: argmax accuracy vs the verified label, per question type
     and per phase
   - probability quality: Brier / log-loss / ECE on the noul probability and on
-    the choice probability vector (the P4 calibration recheck -- a fine-tune is
+    the choice probability vector (the calibration recheck -- a fine-tune is
     a new confidence distribution, so temperatures/thresholds must be refit,
     never carried over)
   - temperature recheck: the p^(1/T) refit on choice vectors, old vs new
@@ -17,32 +17,25 @@ The scorecard (JSON) holds both checkpoints' numbers side by side.
 Device: set JEV_DEVICE=cuda -- the single attached checkpoint fits the 4 GiB
 card; CPU is minutes per batch and produces the same numbers.
 
-Run: uv run python eval/phase6_eval_finetune.py \
+Run: uv run python eval/phases/eval_finetune.py \
     --ckpt <path-or-HF-revision-of-the-fine-tune> \
-    [--base <path-or-HF-revision>] [--val eval/phase6_finetune/val.jsonl]
+    [--base <path-or-HF-revision>] [--val eval/phases/finetune/val.jsonl]
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
-import sys
 from collections import defaultdict
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "src"))
+REPO = Path(__file__).resolve().parent.parent.parent
 
 
-_spec = importlib.util.spec_from_file_location("phase4_recalibrate", REPO / "eval" / "phase4_recalibrate.py")
-if _spec is None or _spec.loader is None:  # pragma: no cover
-    raise SystemExit("cannot load the metric functions")
-p4r = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(p4r)
+import recalibrate_thresholds as p4r  # metric functions (Brier/log-loss/ECE)
 
-OUT_DIR = REPO / "eval" / "phase6_finetune_eval"
+OUT_DIR = REPO / "eval" / "phases" / "finetune_eval"
 
 
 def resolve_checkpoint(spec: str, token: str | None) -> Path:
@@ -146,7 +139,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt", required=True, help="fine-tuned checkpoint: local dir or HF revision")
     parser.add_argument("--base", default=None, help="base checkpoint (default: the pinned runtime revision)")
-    parser.add_argument("--val", type=Path, default=REPO / "eval" / "phase6_finetune" / "val.jsonl")
+    parser.add_argument("--val", type=Path, default=REPO / "eval" / "phases" / "finetune" / "val.jsonl")
     parser.add_argument("--device", default=None, help="default: JEV_DEVICE, else cuda (CPU is minutes/batch)")
     parser.add_argument("--limit", type=int, default=None, help="cap val rows (smoke runs)")
     args = parser.parse_args()
@@ -180,7 +173,7 @@ def main() -> int:
     print(json.dumps(scorecard["checkpoints"], indent=2, default=str))
     print(f"\nwrote {out_path}")
     print("NOTE: a fine-tune is a new confidence distribution -- refit temperatures and")
-    print("thresholds against it (P4 pattern) before any gate trusts its numbers; never")
+    print("thresholds against it before any gate trusts its numbers; never")
     print("carry the base's fitted thresholds over.")
     return 0
 

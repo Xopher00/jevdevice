@@ -234,13 +234,11 @@ class DecisionJournal:
         tier: int | None = None, recipe_id: str | None = None,
     ) -> None:
         """One row per execution-flow event (ran / needs approval / denied),
-        joined to its decision row(s) by call_id. `executed` (additive, default
-        None) lists EVERY command a multi-command action ran -- scroll_to_find's
-        swipes -- not just the last one, which `executed_command` carries.
-        kind (additive, default None) names the ACTION_KINDS kind that ran --
-        P7.5 recipe chains key on it. tier/recipe_id (additive, default None)
-        are the P7.5 planner's decomposition tier and the recipe it replayed,
-        present only on planner-emitted rows."""
+        joined to its decision row(s) by call_id. `executed` lists EVERY command
+        a multi-command action ran (scroll_to_find's swipes), while
+        `executed_command` carries just the last one. `kind` names the
+        ACTION_KINDS kind that ran (recipe chains key on it). `tier`/`recipe_id`
+        appear only on planner-driven rows."""
         if not self.enabled:
             return
         row = {
@@ -269,8 +267,6 @@ class DecisionJournal:
         except Exception as exc:  # noqa: BLE001 -- fail-open: telemetry must never break the action path
             print(f"journal write failed: {exc}")
 
-    # -- reading ---------------------------------------------------------
-
     def record_calibration(
         self, *, event: str, engine: str | None = None, provenance: dict | None = None,
         result: dict | None = None,
@@ -293,6 +289,8 @@ class DecisionJournal:
             self._append({key: self._blobify(value) for key, value in row.items()})
         except Exception as exc:  # noqa: BLE001 -- fail-open: telemetry must never break the decision path
             print(f"journal write failed: {exc}")
+
+    # -- reading ---------------------------------------------------------
 
     def _resolve_value(self, value):
         if (

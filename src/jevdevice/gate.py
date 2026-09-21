@@ -1,7 +1,6 @@
 """Gate: every mutating command passes a deny-list, then a Jev Noul, before it
-runs. Classification never trusts what the small model calls the command —
-is_read_only/is_denied are applied to the literal command string regardless
-of any label attached to it.
+runs. Classification is purely mechanical: is_read_only/is_denied are
+applied to the literal command string, never to a label attached to it.
 """
 
 from __future__ import annotations
