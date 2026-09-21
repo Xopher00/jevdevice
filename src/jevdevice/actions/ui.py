@@ -13,9 +13,28 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from . import question_sets
-from .budget import choice_criteria, current_profile, is_abstain
-from .device import Device
+from jevdevice import question_sets
+from jevdevice.budget import choice_criteria, current_profile, is_abstain
+from jevdevice.device import Device
+from jevdevice.jev import Choice, JevClient, Noul
+from jevdevice.judge.gate import (
+    ClosedSetProposal,
+    CommandVariant,
+    GateResult,
+    Pending,
+    finalize_gate,
+    gate_command,
+    propose_from_closed_set,
+    resolve_gate,
+)
+from jevdevice.judge.narrowing import (
+    _abstain_verdict,
+    extract_fits,
+    fit_questions,
+    narrow_and_pick,
+)
+from jevdevice.matching import NarrowVerdict, decide, extract_value_spans, fuzzy_narrow
+
 from .elements import (
     Element,
     describe_screen,
@@ -27,19 +46,6 @@ from .elements import (
     parse_long_clickable_elements,
     short_options,
 )
-from .gate import (
-    ClosedSetProposal,
-    CommandVariant,
-    GateResult,
-    Pending,
-    finalize_gate,
-    gate_command,
-    propose_from_closed_set,
-    resolve_gate,
-)
-from .jev import Choice, JevClient, Noul
-from .matching import NarrowVerdict, decide, extract_value_spans, fuzzy_narrow
-from .narrowing import _abstain_verdict, extract_fits, fit_questions, narrow_and_pick
 from .services import execute_command
 
 # These module constants are SOURCED from the

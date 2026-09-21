@@ -10,11 +10,12 @@ import asyncio
 import re
 from dataclasses import dataclass
 
-from . import question_sets
-from .budget import choice_criteria, current_profile, is_abstain
-from .common import gated
-from .device import Device
-from .gate import (
+from jevdevice import question_sets
+from jevdevice.budget import choice_criteria, current_profile, is_abstain
+from jevdevice.common import gated
+from jevdevice.device import Device
+from jevdevice.jev import JevClient
+from jevdevice.judge.gate import (
     ClosedSetProposal,
     CommandVariant,
     GateResult,
@@ -23,8 +24,7 @@ from .gate import (
     propose_from_closed_set,
     resolve_gate,
 )
-from .jev import JevClient
-from .narrowing import narrow_and_pick
+from jevdevice.judge.narrowing import narrow_and_pick
 
 # svc's controllable services are a small, genuinely fixed set (not app-specific).
 TOGGLEABLE_SERVICES = {"bluetooth": None, "nfc": None, "data": None}

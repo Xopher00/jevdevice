@@ -12,10 +12,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
-from . import question_sets
-from .budget import choice_criteria, current_profile, is_abstain
-from .jev import Choice, JevClient, Noul
-from .matching import confidence_gate
+from jevdevice import question_sets
+from jevdevice.budget import choice_criteria, current_profile, is_abstain
+from jevdevice.jev import Choice, JevClient, Noul
+from jevdevice.matching import confidence_gate
 
 # Real argv shapes classified as read-only, by (argv[0], rest-of-argv-prefix-or-None).
 # None means "any args" -- e.g. dumpsys is read-only regardless of which service.

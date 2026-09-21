@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import os
 
+from jevdevice.actions.elements import dump_screen, foreground_package
+from jevdevice.device import Device
+
 from . import decision_log
-from .device import Device
-from .elements import dump_screen, foreground_package
 
 ENV_GRAPH_EDGE = "JEV_GRAPH_EDGE"  # "0"/"off" disables the before/after foreground dumps
 GRAPH_EDGE_DEFAULT = True

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jevdevice.elements import (
+from jevdevice.actions.elements import (
     _natural_description,
     count_unlabeled_interactive,
     describe_screen,
@@ -10,7 +10,7 @@ from jevdevice.elements import (
     parse_all_elements,
     parse_editable_elements,
 )
-from jevdevice.ui import _ELEMENT_CACHE, _LRUCache, _no_editable_field_reasons
+from jevdevice.actions.ui import _ELEMENT_CACHE, _LRUCache, _no_editable_field_reasons
 
 
 def test_lru_cache_evicts_oldest_past_capacity() -> None:

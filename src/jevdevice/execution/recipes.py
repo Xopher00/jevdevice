@@ -31,8 +31,8 @@ from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 
-from . import decision_log
-from .question_sets import load as load_question_set
+from jevdevice.journal import decision_log
+from jevdevice.question_sets import load as load_question_set
 
 DEFAULT_RECIPES_DIR = Path.home() / ".jevdevice" / "recipes"
 ENV_RECIPES_DIR = "JEV_RECIPES_DIR"
@@ -242,7 +242,7 @@ class RecipeStore:
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI
-    """`python -m jevdevice.recipes list` / `match "goal text"`. Building from
+    """`python -m jevdevice.execution.recipes list` / `match "goal text"`. Building from
     the journal is an eval-script job (eval/phases/build_recipes.py) because
     the dev/held-out split guard needs eval/goals.yaml."""
     import sys
@@ -258,5 +258,5 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI
         print(json.dumps({"matched": hit is not None, "score": None if hit is None else round(hit[1], 3),
                           "recipe_id": None if hit is None else hit[0].recipe_id}))
         return 0
-    print("usage: python -m jevdevice.recipes [list] | match '<goal text>'", file=sys.stderr)
+    print("usage: python -m jevdevice.execution.recipes [list] | match '<goal text>'", file=sys.stderr)
     return 2

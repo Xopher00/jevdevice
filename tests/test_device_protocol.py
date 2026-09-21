@@ -13,9 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import jevdevice.device as device_mod
+import jevdevice
+from jevdevice.actions.elements import Element, parse_editable_elements
 from jevdevice.device import AdbDevice, Device
-from jevdevice.elements import Element, parse_editable_elements
 
 PHASES_DIR = Path(__file__).resolve().parent.parent / "eval" / "phases"
 if str(PHASES_DIR) not in sys.path:
@@ -37,13 +37,13 @@ def test_engine_modules_import_the_device_protocol_not_the_transport() -> None:
     """T2's done-when, pinned mechanically: device-touching engine modules type
     against the protocol; only the composition root (common) and AdbDevice
     import transport.py. gate/planner carry no device import at all."""
-    device_typed = ["dispatch.py", "ui.py", "elements.py", "services.py", "app_launch.py", "outcomes.py"]
-    device_free = ["gate.py", "planner.py"]
-    src = Path(device_mod.__file__).resolve().parent
+    device_typed = ["execution/dispatch.py", "actions/ui.py", "actions/elements.py", "actions/services.py", "actions/app_launch.py", "journal/outcomes.py"]
+    device_free = ["judge/gate.py", "execution/planner.py"]
+    src = Path(jevdevice.__file__).resolve().parent  # device/ is a package; engine files live at the package root
     for name in device_typed:
         text = (src / name).read_text()
-        assert "from .transport import" not in text, name
-        assert "from .device import" in text, name
+        assert "from jevdevice.transport import" not in text and "from .transport import" not in text, name
+        assert "from jevdevice.device import" in text, name
     for name in device_free:
         text = (src / name).read_text()
         assert "transport" not in text, name
@@ -227,7 +227,7 @@ class _EmptyStore:
 def journal_recorder(monkeypatch):
     """Planner rows must not touch the real journal (same pattern as
     test_recipes_planner)."""
-    from jevdevice import decision_log
+    from jevdevice.journal import decision_log
 
     class LiveJournal:
         def __init__(self) -> None:

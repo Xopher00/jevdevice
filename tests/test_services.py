@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jevdevice.services import parse_key_value
+from jevdevice.actions.services import parse_key_value
 
 
 def test_parse_key_value_reads_simple_one_colon_per_line() -> None:

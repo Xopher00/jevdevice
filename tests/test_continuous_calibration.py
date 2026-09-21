@@ -33,7 +33,7 @@ from jevdevice.calibrate.continuous import (
     shadow_compare,
     tag_segments,
 )
-from jevdevice.decision_log import CALIBRATION, DecisionJournal
+from jevdevice.journal.decision_log import CALIBRATION, DecisionJournal
 
 
 def _decision_row(call_id: str, *, phase: str = "gate", state: dict | None = None,

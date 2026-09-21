@@ -11,12 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from jevdevice import planner
-from jevdevice import recipes as recipes_mod
-from jevdevice.decision_log import goal_id_for
-from jevdevice.gate import CommandVariant, GateResult
-from jevdevice.jev import ChoiceAnswer, NoulAnswer
-from jevdevice.recipes import (
+from jevdevice.execution import planner
+from jevdevice.execution import recipes as recipes_mod
+from jevdevice.execution.recipes import (
     Recipe,
     RecipeStep,
     RecipeStore,
@@ -25,6 +22,9 @@ from jevdevice.recipes import (
     similarity,
     verify_recipe,
 )
+from jevdevice.jev import ChoiceAnswer, NoulAnswer
+from jevdevice.journal.decision_log import goal_id_for
+from jevdevice.judge.gate import CommandVariant, GateResult
 
 
 class RecordingJournal:
@@ -79,7 +79,7 @@ def _recipe(goal: str, steps: list[RecipeStep]) -> Recipe:
 
 @pytest.fixture()
 def journal_recorder(monkeypatch):
-    from jevdevice import decision_log
+    from jevdevice.journal import decision_log
 
     live = LiveJournal()
     monkeypatch.setattr(decision_log, "get_journal", lambda: live)
@@ -366,7 +366,7 @@ def _fake_handler(*, ready: CommandVariant | None, call_id: str | None = "cid-ga
 
 
 async def test_run_kind_unattended_runs_a_ready_command(monkeypatch, journal_recorder) -> None:
-    from jevdevice import dispatch
+    from jevdevice.execution import dispatch
 
     monkeypatch.setenv("JEV_GRAPH_EDGE", "1")
     monkeypatch.setitem(dispatch.KIND_TABLE, "swipe", _fake_handler(ready=CommandVariant("input keyevent 4", "back")))
@@ -380,7 +380,7 @@ async def test_run_kind_unattended_runs_a_ready_command(monkeypatch, journal_rec
 
 
 async def test_run_kind_unattended_never_auto_approves(monkeypatch, journal_recorder) -> None:
-    from jevdevice import dispatch
+    from jevdevice.execution import dispatch
 
     monkeypatch.setitem(dispatch.KIND_TABLE, "swipe", _fake_handler(ready=None, call_id=None))
     result = await planner.run_kind_unattended(

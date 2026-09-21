@@ -30,7 +30,8 @@ import os
 import time
 import uuid
 
-from . import decision_log
+from jevdevice.journal import decision_log
+
 from .jev import Answer, JevClient, JevError, Question, _parse_answer
 from .ledger import EngineInfo, Usage, UsageLedger
 

@@ -19,12 +19,13 @@ from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
 
-from . import outcomes
+from jevdevice.actions.services import take_screenshot
+from jevdevice.execution.dispatch import KIND_TABLE, pick_kind, response_for, run_kind
+from jevdevice.journal import outcomes
+from jevdevice.journal.decision_log import ESCALATED, NONE, goal_scope
+from jevdevice.judge.gate import CommandVariant, Pending
+
 from .common import bootstrap
-from .decision_log import ESCALATED, NONE, goal_scope
-from .dispatch import KIND_TABLE, pick_kind, response_for, run_kind
-from .gate import CommandVariant, Pending
-from .services import take_screenshot
 
 mcp = FastMCP("jevdevice")
 jev, transport = bootstrap()

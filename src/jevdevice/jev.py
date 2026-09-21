@@ -23,7 +23,9 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
-from . import decision_log, shadow
+from jevdevice.journal import decision_log
+from jevdevice.judge import shadow
+
 from .ledger import EngineInfo, Usage, UsageLedger
 
 DECISIONS_URL = "https://api.typesafe.ai/v1/systemone"

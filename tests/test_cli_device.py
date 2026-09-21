@@ -22,7 +22,7 @@ import pytest
 
 from jevdevice import question_sets
 from jevdevice.device import CLI_SNAPSHOT_COMMAND, CliDevice, Device
-from jevdevice.dispatch import pick_kind
+from jevdevice.execution.dispatch import pick_kind
 from jevdevice.jev import ChoiceAnswer, NoulAnswer
 
 
@@ -147,7 +147,7 @@ class _RecordingJournal:
 
 @pytest.fixture()
 def journal_recorder(monkeypatch):
-    from jevdevice import decision_log
+    from jevdevice.journal import decision_log
 
     live = _RecordingJournal()
     monkeypatch.setattr(decision_log, "get_journal", lambda: live)

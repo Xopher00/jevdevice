@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import asyncio
 
-from jevdevice.app_launch import parse_package_list
+from jevdevice.actions.app_launch import parse_package_list
+from jevdevice.actions.services import parse_dumpsys_services
 from jevdevice.common import bootstrap
-from jevdevice.narrowing import narrow_and_pick
-from jevdevice.services import parse_dumpsys_services
+from jevdevice.judge.narrowing import narrow_and_pick
 
 PACKAGE_CASES = [
     ("obvious-fit", "open Gmail"),

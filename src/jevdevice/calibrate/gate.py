@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 
 from jevdevice.common import bootstrap
-from jevdevice.gate import CommandVariant, gate_command
+from jevdevice.judge.gate import CommandVariant, gate_command
 
 CASES = [
     ("read-only, obviously safe", "read the battery level", "dumpsys battery", "reads battery status"),

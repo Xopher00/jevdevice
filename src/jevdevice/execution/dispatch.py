@@ -15,16 +15,10 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from . import outcomes, question_sets
-from .app_launch import launch_app_for_goal
-from .budget import choice_criteria, current_profile, is_abstain
-from .common import bootstrap, gated
-from .decision_log import ESCALATED, goal_scope
-from .device import Device
-from .elements import dump_screen, screen_summary
-from .gate import CommandVariant, confirm_with_human
-from .jev import JevClient
-from .services import (
+from jevdevice import question_sets
+from jevdevice.actions.app_launch import launch_app_for_goal
+from jevdevice.actions.elements import dump_screen, screen_summary
+from jevdevice.actions.services import (
     DND_MODES,
     TOGGLEABLE_SERVICES,
     execute_command,
@@ -35,7 +29,7 @@ from .services import (
     run_dumpsys_query,
     take_screenshot,
 )
-from .ui import (
+from jevdevice.actions.ui import (
     execute_tap,
     execute_type,
     propose_long_press,
@@ -44,6 +38,13 @@ from .ui import (
     propose_type,
     scroll_to_find,
 )
+from jevdevice.budget import choice_criteria, current_profile, is_abstain
+from jevdevice.common import bootstrap, gated
+from jevdevice.device import Device
+from jevdevice.jev import JevClient
+from jevdevice.journal import outcomes
+from jevdevice.journal.decision_log import ESCALATED, goal_scope
+from jevdevice.judge.gate import CommandVariant, confirm_with_human
 
 # pick_kind() picks exactly one of these per goal; sequencing multi-step goals is the caller's job.
 ACTION_KINDS = {

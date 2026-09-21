@@ -19,7 +19,7 @@ import export_flywheel as p7e
 import mine_recoveries as p7m
 import perturbation_harness as p7h
 
-from jevdevice.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import DecisionJournal
 
 # --- perturbation plan ------------------------------------------------
 
@@ -85,7 +85,7 @@ def _journal_with_run(tmp_path: Path, goal: str, *, verified: bool) -> DecisionJ
 
 
 def test_extract_trajectories_windows_rows_and_scores_verification(tmp_path: Path) -> None:
-    from jevdevice.decision_log import goal_id_for
+    from jevdevice.journal.decision_log import goal_id_for
 
     goal = "Turn Bluetooth on."
     journal = _journal_with_run(tmp_path, goal, verified=True)
@@ -108,7 +108,7 @@ def test_extract_trajectories_windows_rows_and_scores_verification(tmp_path: Pat
 # --- failure mining: failure mining --------------------------------------------------------
 
 def _mine_journal(tmp_path: Path, goal: str) -> tuple[list[dict], dict]:
-    from jevdevice.decision_log import goal_id_for
+    from jevdevice.journal.decision_log import goal_id_for
 
     journal = DecisionJournal(tmp_path)
     goal_id = goal_id_for(goal)

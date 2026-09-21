@@ -48,7 +48,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from jevdevice.budget import LAYA_PROFILE, NONE_OF_THESE, BudgetProfile, profile_for
-from jevdevice.decision_log import (
+from jevdevice.journal.decision_log import (
     ESCALATED,
     FAILED,
     OUTCOME,

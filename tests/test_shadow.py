@@ -10,9 +10,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from jevdevice import shadow as shadow_mode
 from jevdevice.calibrate.continuous import select_window
 from jevdevice.jev import JevClient, Noul
+from jevdevice.judge import shadow as shadow_mode
 from jevdevice.laya_backend import MODEL, LayaClient
 
 

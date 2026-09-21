@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import shlex
 
-from jevdevice.gate import (
+from jevdevice.judge.gate import (
     CommandVariant,
     GateVerdict,
     gate_command,

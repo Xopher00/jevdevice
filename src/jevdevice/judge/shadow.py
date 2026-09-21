@@ -34,7 +34,7 @@ import asyncio
 import os
 import uuid
 
-from .budget import JEV_ENGINE_NAME
+from jevdevice.budget import JEV_ENGINE_NAME
 
 SHADOW_ENV = "JEV_SHADOW"
 SHADOW_MODE_ENV = "JEV_SHADOW_MODE"
@@ -67,8 +67,13 @@ def attach(primary) -> None:
     already-attached shadow is left alone."""
     if primary.shadow is not None or primary.engine_name != JEV_ENGINE_NAME or not enabled():
         return
-    from .common import DEFAULT_DEVICE, DEVICE_ENV  # lazy: common imports this module
-    from .laya_backend import LayaClient  # lazy: torch stays inside _build_router
+    from jevdevice.common import (  # lazy: common imports this module
+        DEFAULT_DEVICE,
+        DEVICE_ENV,
+    )
+    from jevdevice.laya_backend import (
+        LayaClient,  # lazy: torch stays inside _build_router
+    )
 
     primary.shadow = LayaClient(device=os.environ.get(DEVICE_ENV, DEFAULT_DEVICE))
 

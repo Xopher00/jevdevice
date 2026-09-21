@@ -9,11 +9,12 @@ import json
 
 from mcp.shared.memory import create_connected_server_and_client_session
 
+from jevdevice.actions.elements import dump_screen, parse_actionable_elements
+
 # bootstrap() requires the TYPESAFE_AI_API key only for the jev engine, and
 # test_decision_log's module import (which runs first in a full-suite collection)
 # provides one for that case -- no placeholder needed here.
 from jevdevice.common import SERIAL
-from jevdevice.elements import dump_screen, parse_actionable_elements
 from jevdevice.mcp_server import mcp
 from jevdevice.transport import AdbTransport
 

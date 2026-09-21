@@ -32,10 +32,10 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 
-from . import question_sets
-from .budget import choice_criteria, current_profile, is_abstain
-from .jev import Answer, Choice, JevClient, Question
-from .matching import (
+from jevdevice import question_sets
+from jevdevice.budget import choice_criteria, current_profile, is_abstain
+from jevdevice.jev import Answer, Choice, JevClient, Question
+from jevdevice.matching import (
     NarrowVerdict,
     chunk_candidates,
     decide,

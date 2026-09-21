@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from unittest.mock import patch
 
+from jevdevice.actions.elements import parse_actionable_elements, short_options
 from jevdevice.budget import (
     JEV_PROFILE,
     LAYA_PROFILE,
@@ -16,10 +17,9 @@ from jevdevice.budget import (
     is_abstain,
     profile_for,
 )
-from jevdevice.elements import parse_actionable_elements, short_options
-from jevdevice.gate import propose_from_closed_set
 from jevdevice.jev import ChoiceAnswer, NoulAnswer
-from jevdevice.narrowing import narrow_and_pick
+from jevdevice.judge.gate import propose_from_closed_set
+from jevdevice.judge.narrowing import narrow_and_pick
 
 
 class FakeJudge:
@@ -225,7 +225,7 @@ def test_short_options_prefers_text_then_deduplicates_collisions() -> None:
 
 
 def test_describe_screen_limit_comes_from_the_profile(monkeypatch) -> None:
-    from jevdevice.elements import describe_screen
+    from jevdevice.actions.elements import describe_screen
     nodes = "".join(
         f'<node text="item{i}" resource-id="" content-desc="" clickable="true" bounds="[0,{i}][100,{i + 10}]"/>'
         for i in range(20)
@@ -271,7 +271,7 @@ def test_calibration_knobs_carry_labeled_sample_provenance() -> None:
 
 async def test_narrow_and_pick_thresholds_come_from_the_answering_engine_profile() -> None:
     laya_like = replace(JEV_PROFILE, engine="laya", min_fit=0.2, min_confidence=0.3, min_margin=0.05, shortlist_first=False)
-    with patch("jevdevice.narrowing.current_profile", return_value=laya_like):
+    with patch("jevdevice.judge.narrowing.current_profile", return_value=laya_like):
         judge = FakeJudge("laya", [_round2_payload("gm", 1, confidence=0.35, fit=0.25)])
         verdict = await narrow_and_pick(judge, "open gmail", ["gm"],
                                         instructions="Which package best satisfies the goal?",

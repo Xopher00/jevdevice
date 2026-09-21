@@ -7,7 +7,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import shadow
+from jevdevice.judge import shadow
+
 from .budget import (  # engine names live in budget.py
     ENGINE_ENV,
     ENGINES,

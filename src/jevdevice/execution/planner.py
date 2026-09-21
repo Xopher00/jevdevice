@@ -24,11 +24,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from . import outcomes, question_sets
-from .budget import current_profile
-from .decision_log import NONE, VERIFIED, goal_id_for, goal_scope
+from jevdevice import question_sets
+from jevdevice.actions.elements import describe_screen, dump_screen, screen_summary
+from jevdevice.budget import current_profile
+from jevdevice.journal import outcomes
+from jevdevice.journal.decision_log import NONE, VERIFIED, goal_id_for, goal_scope
+
 from .dispatch import pick_kind, run_kind
-from .elements import describe_screen, dump_screen, screen_summary
 from .recipes import Recipe, RecipeStore
 
 MAX_PLANNER_STEPS = 12  # stepwise-selection bound: most actions one goal may take

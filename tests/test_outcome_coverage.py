@@ -17,11 +17,11 @@ os.environ.setdefault("ANDROID_SERIAL", "placeholder-for-import")
 
 import pytest
 
-from jevdevice.app_launch import LaunchOutcome, launch_app_for_goal
+from jevdevice.actions.app_launch import LaunchOutcome, launch_app_for_goal
+from jevdevice.actions.services import DumpsysOutcome, run_dumpsys_query
+from jevdevice.actions.ui import ScrollToFindOutcome, scroll_to_find
 from jevdevice.jev import ChoiceAnswer, NoulAnswer
-from jevdevice.narrowing import narrow_and_pick
-from jevdevice.services import DumpsysOutcome, run_dumpsys_query
-from jevdevice.ui import ScrollToFindOutcome, scroll_to_find
+from jevdevice.judge.narrowing import narrow_and_pick
 
 # --- fakes --------------------------------------------------------------------
 
@@ -181,7 +181,7 @@ class RecordingJournal:
 
 @pytest.fixture()
 def outcome_journal(monkeypatch):
-    from jevdevice import decision_log
+    from jevdevice.journal import decision_log
 
     recorder = RecordingJournal()
     monkeypatch.setattr(decision_log, "get_journal", lambda: recorder)
@@ -192,8 +192,9 @@ def outcome_journal(monkeypatch):
 
 
 async def test_ungated_kinds_emit_outcome_rows(monkeypatch, outcome_journal):
-    from jevdevice import dispatch, mcp_server
-    from jevdevice.decision_log import VERIFIED
+    from jevdevice import mcp_server
+    from jevdevice.execution import dispatch
+    from jevdevice.journal.decision_log import VERIFIED
 
     async def fake_open(jev, transport, goal, *, verbose):
         return LaunchOutcome("com.calc", 0.9, True, 0.9, 1, "com.calc", call_id="cid-open")
@@ -234,8 +235,9 @@ async def test_ungated_kinds_emit_outcome_rows(monkeypatch, outcome_journal):
 
 
 async def test_ungated_escalations_emit_their_outcome_row_too(monkeypatch, outcome_journal):
-    from jevdevice import dispatch, mcp_server
-    from jevdevice.decision_log import ESCALATED
+    from jevdevice import mcp_server
+    from jevdevice.execution import dispatch
+    from jevdevice.journal.decision_log import ESCALATED
 
     async def fake_open(jev, transport, goal, *, verbose):
         return LaunchOutcome(None, 0.2, False, 0.0, 0, "", ("judge abstained",), call_id="cid-esc")
@@ -264,7 +266,7 @@ _TOGGLE_GATE_UNCERTAIN = {"safe": NoulAnswer(noul=0.5)}  # below the profile flo
 
 
 async def test_run_kind_sync_on_pending_hook_round_trips(monkeypatch, outcome_journal) -> None:
-    from jevdevice import dispatch
+    from jevdevice.execution import dispatch
 
     judge = FakeJudge("jev", [dict(_TOGGLE_FILL), dict(_TOGGLE_GATE_UNCERTAIN)])
     seen: dict = {}
@@ -291,7 +293,7 @@ async def test_run_kind_sync_on_pending_hook_round_trips(monkeypatch, outcome_jo
 
 
 async def test_run_kind_async_on_pending_hook_still_round_trips(monkeypatch, outcome_journal) -> None:
-    from jevdevice import dispatch
+    from jevdevice.execution import dispatch
 
     judge = FakeJudge("jev", [dict(_TOGGLE_FILL), dict(_TOGGLE_GATE_UNCERTAIN)])
 

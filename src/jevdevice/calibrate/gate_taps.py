@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import asyncio
 
+from jevdevice.actions.ui import TAP_SAFE_INSTRUCTIONS
 from jevdevice.common import bootstrap
-from jevdevice.gate import DEFAULT_SAFE_INSTRUCTIONS, CommandVariant, gate_command
-from jevdevice.ui import TAP_SAFE_INSTRUCTIONS
+from jevdevice.judge.gate import DEFAULT_SAFE_INSTRUCTIONS, CommandVariant, gate_command
 
 SEVEN = "text='7' resource-id='com.sec.android.app.popupcalculator:id/calc_keypad_btn_07' content-desc='7'"
 DELETE = "resource-id='com.sec.android.app.popupcalculator:id/calc_handle_btn_delete' content-desc='Backspace'"

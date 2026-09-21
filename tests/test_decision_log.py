@@ -14,15 +14,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-from jevdevice import decision_log
-from jevdevice.decision_log import (
+from jevdevice.jev import JevClient, JevError, Noul
+from jevdevice.journal import decision_log
+from jevdevice.journal.decision_log import (
     BLOB_MIN_BYTES,
     DecisionJournal,
     goal_id_for,
     goal_scope,
 )
-from jevdevice.gate import CommandVariant, GateResult
-from jevdevice.jev import JevClient, JevError, Noul
+from jevdevice.judge.gate import CommandVariant, GateResult
 
 # mcp_server bootstrap() needs both env vars at import; placeholders are enough --
 # the outcome helpers tested here never touch a device or the network.
@@ -264,7 +264,7 @@ def test_every_ask_call_site_carries_a_phase_label() -> None:
 
 def test_pending_action_carries_the_gate_call_id() -> None:
     from jevdevice import mcp_server
-    from jevdevice.gate import GateVerdict, Pending
+    from jevdevice.judge.gate import GateVerdict, Pending
 
     gate_result = GateResult(verdict=GateVerdict.NEEDS_APPROVAL, reason="jev_uncertain",
                              noul_confidence=0.5, call_id="cid-gate")
@@ -273,14 +273,14 @@ def test_pending_action_carries_the_gate_call_id() -> None:
     mcp_server._store_pending("press 7", "tap", "element", 0.9, pending)
     stored = next(iter(mcp_server._PENDING.values()))
     assert stored.call_id == "cid-gate"
-    from jevdevice.dispatch import call_id_of
+    from jevdevice.execution.dispatch import call_id_of
     assert call_id_of(pending) == "cid-gate"
     assert mcp_server.PendingAction(goal="g", kind="tap", resume_arg=None, confidence=0.0,
                                     pending=pending).call_id is None  # backward compatible default
 
 
 def test_verification_mapping_from_response_status() -> None:
-    from jevdevice.outcomes import verification_from_response
+    from jevdevice.journal.outcomes import verification_from_response
     assert verification_from_response({"status": "ok"}) == "verified"
     assert verification_from_response({"status": "escalated"}) == "escalated"
     assert verification_from_response({"status": "unverified", "exit_code": 1}) == "failed"
@@ -293,7 +293,7 @@ def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None
 
     recorder = RecordingJournal()
     monkeypatch.setattr(decision_log, "_default_journal", recorder)
-    from jevdevice.outcomes import verification_from_response
+    from jevdevice.journal.outcomes import verification_from_response
     with goal_scope("press 7"):
         response = {"status": "ok", "satisfied": 0.97}
         mcp_server._emit_outcome(call_id="cid-gate", executed_command="input tap 5 700",
@@ -310,7 +310,7 @@ def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None
 # --- truncation telemetry ----------------------------------------------------
 
 def test_describe_screen_telemetry_records_what_was_cut() -> None:
-    from jevdevice.elements import describe_screen
+    from jevdevice.actions.elements import describe_screen
     nodes = "".join(
         f'<node text="item{i}" resource-id="" content-desc="" clickable="true" bounds="[0,{i}][100,{i + 10}]"/>'
         for i in range(10)
@@ -326,7 +326,7 @@ def test_describe_screen_telemetry_records_what_was_cut() -> None:
 
 
 def test_describe_screen_without_telemetry_dict_is_unchanged() -> None:
-    from jevdevice.elements import describe_screen
+    from jevdevice.actions.elements import describe_screen
     dump_xml = '<hierarchy><node text="Send" resource-id="" content-desc="" clickable="true" bounds="[0,0][100,50]"/></hierarchy>'
     assert describe_screen(dump_xml) == ["text='Send'"]  # existing callers unaffected
 

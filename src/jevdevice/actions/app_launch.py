@@ -7,12 +7,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from . import question_sets
-from .budget import current_profile
-from .device import Device
+from jevdevice import question_sets
+from jevdevice.budget import current_profile
+from jevdevice.device import Device
+from jevdevice.jev import JevClient
+from jevdevice.judge.narrowing import narrow_and_pick
+
 from .elements import dump_screen, foreground_package
-from .jev import JevClient
-from .narrowing import narrow_and_pick
 
 
 def parse_package_list(raw: str) -> list[str]:

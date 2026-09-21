@@ -101,8 +101,8 @@ class _FakeHTTP:
 
 
 async def test_ask_journals_generated_source_and_compiled_stays_none(tmp_path, monkeypatch) -> None:
-    from jevdevice.decision_log import DecisionJournal
     from jevdevice.jev import JevClient
+    from jevdevice.journal.decision_log import DecisionJournal
 
     monkeypatch.delenv("JEV_JOURNAL", raising=False)
     journal = DecisionJournal(tmp_path)

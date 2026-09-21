@@ -10,9 +10,9 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
-from .budget import current_profile
-from .device import Device
-from .matching import fuzzy_narrow
+from jevdevice.budget import current_profile
+from jevdevice.device import Device
+from jevdevice.matching import fuzzy_narrow
 
 
 async def dump_screen(device: Device) -> str:
