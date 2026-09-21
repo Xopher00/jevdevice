@@ -20,7 +20,13 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.types import Image
 
 from jevdevice.actions.services import take_screenshot
-from jevdevice.execution.dispatch import KIND_TABLE, pick_kind, response_for, run_kind
+from jevdevice.execution.dispatch import (
+    ATTACHES_RESULT,
+    KIND_TABLE,
+    pick_kind,
+    response_for,
+    run_kind,
+)
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import ESCALATED, NONE, goal_scope
 from jevdevice.judge.gate import CommandVariant, Pending
@@ -68,11 +74,9 @@ def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: flo
 
 
 def _emit_outcome(**kw) -> None:
-    """Outcome-row emission bound to this server's device (the shared
-    implementation is outcomes.emit_outcome; journaling is fail-open).
-    The module-level variable keeps its historical name `transport` -- an
-    existing test reads mcp_server.transport.serial -- but now holds the
-    Device-protocol object (AdbDevice), not the raw AdbTransport."""
+    """Outcome-row emission bound to this server's device (outcomes.emit_outcome
+    does the work; journaling is fail-open). Stays named `transport`: a test
+    reads mcp_server.transport.serial."""
     outcomes.emit_outcome(device=transport, **kw)
 
 
@@ -112,9 +116,7 @@ async def device_do(
         if kind is None:
             _emit_outcome(call_id=kind_pick.call_id, verification=ESCALATED, status="escalated")
             return await _with_screenshot({"status": "escalated", "reasons": list(kind_pick.reasons)}, include=include_screenshot)
-        # A goal that IS a screenshot returns the image even with include_screenshot=False --
-        # otherwise device_do(goal="take a screenshot") would answer {"status": "ok"} and nothing else.
-        include = include_screenshot or kind == "screenshot"
+        include = include_screenshot or kind in ATTACHES_RESULT
         response = await run_kind(
             jev, transport, kind, goal, verify=verify, auto_approve=auto_approve,
             direction=direction, max_attempts=max_attempts, on_pending=_store_pending,
@@ -133,8 +135,7 @@ async def device_screenshot() -> Image:
 async def device_approve(thread_id: str, decision: str, command: str | None = None, include_screenshot: bool = False) -> list:
     """Resolve a pending action from any device_* tool. decision is "approve"
     or "deny". An optional `command` overrides the proposed command (e.g. a
-    human-corrected variant), matching PLAN.md's device_approve(thread_id,
-    decision, command?) signature. include_screenshot=True attaches a real screenshot,
+    human-corrected variant). include_screenshot=True attaches a real screenshot,
     same off-by-default tradeoff as device_do."""
     action = _PENDING.pop(thread_id, None)
     if action is None:

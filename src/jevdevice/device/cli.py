@@ -20,7 +20,12 @@ import asyncio
 import platform
 import shutil
 
-from jevdevice.transport import LocalShellTransport, RunResult, _communicate_or_kill
+from jevdevice.transport import (
+    LocalShellTransport,
+    RunResult,
+    _check_exit,
+    _communicate_or_kill,
+)
 
 from .protocol import DEFAULT_COMMAND_TIMEOUT_S
 
@@ -58,8 +63,7 @@ class CliDevice:
         """Raw stdout bytes -- the CLI analog of `screencap -p` streaming."""
         process = await self._spawn(command, timeout)
         stdout, stderr, exit_code = await _communicate_or_kill(process, timeout)
-        if exit_code != 0:
-            raise RuntimeError(f"{command!r} failed (exit {exit_code}): {stderr.decode(errors='replace')[:200]}")
+        _check_exit(command, stderr, exit_code)
         return stdout
 
     async def window_size(self) -> tuple[int, int]:

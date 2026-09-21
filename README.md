@@ -60,7 +60,7 @@ replayable, and safe to A/B.
 
 ## Device families and the Device protocol
 
-Device knowledge sits behind a five-member protocol (`src/jevdevice/device.py`):
+Device knowledge sits behind a five-member protocol (`src/jevdevice/device/protocol.py`):
 `name` (journal identity), `dump_hierarchy()` (the snapshot), `run()`
 (one shell command — exit code and stdout are device truth), `run_binary()`
 (raw stdout bytes), `window_size()` (geometry). Engine modules type against
@@ -138,7 +138,7 @@ construction.
 
 ## Recipes and the tiered planner
 
-Multi-step goals resolve through a tiered planner (`src/jevdevice/planner.py`)
+Multi-step goals resolve through a tiered planner (`src/jevdevice/execution/planner.py`)
 that never generates free-form plans:
 
 1. a **stored recipe** (a previously verified chain of actions for the same
@@ -204,7 +204,7 @@ The local-shell family needs neither a phone nor an API key path beyond the
 engine's own requirements:
 
 ```sh
-uv run python -m jevdevice.dispatch "open the calculator"   # one goal, phone, CLI
+uv run python -m jevdevice.execution.dispatch "open the calculator"   # one goal, phone, CLI
 uv run python eval/phases/cli_family.py run                # dev goals, local shell
 ```
 
@@ -227,9 +227,6 @@ key. `uv run ruff check` keeps the code lint-clean.
 - **Journal everything** — the journal is the single source of labeled data,
   provenance, and replay for every later improvement (calibration,
   fine-tunes, recipes, question compilation).
-
-`PLAN.md` records the founding design rationale; the local LOGBOOK (not
-part of the repository) records how the design evolved, decision by decision.
 
 ## License
 

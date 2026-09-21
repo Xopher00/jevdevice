@@ -288,6 +288,11 @@ def _screenshot_response(outcome, engine_name: str) -> dict:
     return {"status": "ok"}
 
 
+# Kinds whose own result IS the requested artifact -- device_do attaches it
+# even when the caller didn't ask for include_screenshot.
+ATTACHES_RESULT = {"screenshot"}
+
+
 RESPONSE_FOR = {
     "toggle_service": _toggle_response,
     "tap": _tap_response,

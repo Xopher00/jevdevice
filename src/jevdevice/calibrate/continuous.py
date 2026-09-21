@@ -1,40 +1,9 @@
-"""Continuous calibration loop: a rolling-window re-fit of the
-laya engine's thresholds from stored journal distributions -- ZERO model calls.
-
-A one-shot recalibration decays; this makes re-fitting a routine instead
-of an event. One run:
-
-  1. reads journal decision + outcome rows (replay(), blobs resolved),
-  2. joins them by call_id and tags each row's OUTCOME SOURCE SEGMENT --
-     device-verified vs human-resolved (escalated) -- which are different
-     distributions,
-  3. recomputes accuracy/Brier/log-loss/ECE per question type and re-runs the
-     threshold sweeps from the stored answers (no engine touch),
-  4. emits provenance-tagged PROPOSED thresholds for the profile's calibration
-     knobs. Proposals never auto-apply: they shadow-run and are
-     applied only via the tighten-only promotion path (`apply_proposal` /
-     `promote` here).
-
-Fail-closed asymmetry, made mechanical (Standing rule 3): `classify`
-compares each proposed knob against the incumbent and calls it `tighten`,
-`loosen`, or `equal`. `apply_proposal` REJECTS any proposal containing a
-loosening knob -- including a proposal that mixes tightening and loosening
-knobs -- with PromotionError. `promote()` only bypasses that for a proposal
-whose `human_signoff` is set, and the profile's provenance comment records
-every promotion. The test suite pins the rejection (`test_continuous_calibration.py`).
-
-Windows, floors and the promotion switch are named knobs, not literals
-(module constants here, overridable per run via kwargs; the shadow/promotion
-switch lives in the environment as a flag a human sets, default off).
+"""Rolling-window re-fit of the laya engine's thresholds from stored journal
+distributions -- zero model calls. Proposals only ever tighten
+(`apply_proposal` rejects any loosening knob with PromotionError; `promote()`
+bypasses that only when `human_signoff` is set).
 
 Run: uv run python -m jevdevice.calibrate.continuous [journal_dir] [--apply]
-
-Scheduleable -- the job is offline-safe (reads the journal, writes the proposal
-record + one calibration row back):
-
-    # crontab -e  (nightly 03:17; shadow-run mode, never applies anything)
-    17 3 * * * cd /path/to/jevdevice && uv run python -m jevdevice.calibrate.continuous \
-        >> "$HOME/.jevdevice/journal/calibration/cron.log" 2>&1
 """
 
 from __future__ import annotations
@@ -55,6 +24,7 @@ from jevdevice.journal.decision_log import (
     VERIFIED,
     DecisionJournal,
 )
+from jevdevice.matching import margin
 
 # ---- named knobs (window = last N days OR at least M rows; both apply) ----
 WINDOW_DAYS = 30
@@ -418,11 +388,6 @@ class SignalStats:
                      f"(n={self.n}) -- keep incumbent, keep collecting")
 
 
-def _margin(probabilities: dict[str, float]) -> float:
-    ranked = sorted(probabilities.values(), reverse=True)
-    return ranked[0] - ranked[1] if len(ranked) >= 2 else ranked[0]
-
-
 def build_signals(rows: list[dict], segments: dict[str, Segment]) -> dict[str, SignalStats]:
     """Labeled signal samples from the window's decision rows: gate/fit nouls
     and choice confidence/margin, each value carrying its outcome-source
@@ -453,7 +418,7 @@ def build_signals(rows: list[dict], segments: dict[str, Segment]) -> dict[str, S
             stats["confidence"].values.append(pick["confidence"])
             stats["confidence"].labels.append(correct)
             stats["confidence"].segments.append(segment)
-            stats["margin"].values.append(_margin(pick["probabilities"]))
+            stats["margin"].values.append(margin(pick["probabilities"]))
             stats["margin"].labels.append(correct)
             stats["margin"].segments.append(segment)
     return stats

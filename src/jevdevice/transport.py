@@ -38,6 +38,13 @@ async def _communicate_or_kill(
     return stdout, stderr, process.returncode or 0
 
 
+def _check_exit(command: str, stderr: bytes, exit_code: int) -> None:
+    """Shared raise for run_binary's non-zero exit -- the only piece of
+    AdbTransport/CliDevice's run_binary bodies that isn't already `_communicate_or_kill`."""
+    if exit_code != 0:
+        raise RuntimeError(f"{command!r} failed (exit {exit_code}): {stderr.decode(errors='replace')[:200]}")
+
+
 async def _finish(process: asyncio.subprocess.Process, timeout: float) -> RunResult:
     """Shared tail of AdbTransport.run / LocalShellTransport.run -- they differ only in
     how the process is spawned."""
@@ -99,8 +106,7 @@ class AdbTransport:
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr, exit_code = await _communicate_or_kill(process, timeout)
-        if exit_code != 0:
-            raise RuntimeError(f"{command!r} failed (exit {exit_code}): {stderr.decode(errors='replace')[:200]}")
+        _check_exit(command, stderr, exit_code)
         return stdout
 
 

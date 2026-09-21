@@ -1,22 +1,13 @@
 """Per-engine budget profile: every option-count bound, state-size cut, and
 screen truncation is a named knob on one profile per engine -- never a bare
-int at a call site.
+int at a call site. Lives here rather than common.py so pure modules
+(matching, narrowing, elements) can read a profile without importing the
+client wiring (avoids the common -> jev -> decision_log import cycle).
 
-Why one profile per engine: the hosted engine caps a Choice at 255 options
-with a ~32k-token state budget, so the jev profile keeps those historical
-values and behavior is unchanged. The in-process engine's head is a TOKEN
-budget (head_max_len=256 fits ~20 short options; the option markers alone
-must fit) with a total max_len=1024 where overflow raises -- so its profile
-bounds everything the judge sees accordingly.
-
-Engine-name constants live here (not common.py) so pure modules -- matching,
-narrowing, elements -- can read the profile without importing the client
-wiring (import cycle: common -> jev -> decision_log; budget imports neither).
-
-`current_profile(engine)` keys off the ANSWERING ENGINE, not the process env,
+`current_profile(engine)` keys off the ANSWERING engine, not the process env,
 so both engines can run in one process without fighting over one set of
-knobs. With no argument it falls back to JEV_ENGINE, the same env bootstrap()
-reads, for engine-less call sites (describe_screen).
+knobs; with no argument it falls back to JEV_ENGINE for engine-less call
+sites (describe_screen).
 """
 
 from __future__ import annotations
@@ -112,16 +103,7 @@ LAYA_PROFILE = BudgetProfile(
     descriptions_in_state=True,
     abstain_option=True,
     probe_max_chars=1200,
-    # Thresholds: the pre-recalibration jev-era values. The refit harness
-    # (eval/phases/recalibrate_thresholds.py over journaled dev taps) could not
-    # clear the auto-apply bar -- precision never reached 0.95 at any acting
-    # threshold (gate noul max 1.0 on 4 approvals, n=14 < 20; fit-noul floor
-    # max 0.60 at n=220; final-pick choice max 0.75 at n=21) -- so every value
-    # stays put and laya escalates fail-closed. Refit waits for more labeled
-    # rows. Provenance: revision 1c5edc17a7acd8701df6fc341c0d179f1c62c982,
-    # taps captured 2026-09-20 on JEV_DEVICE=cuda (CPU-vs-CUDA drift measured
-    # 0.006 on a simple probe -- rerun taps on CPU before trusting a
-    # CPU-runtime refit).
+    # Pre-recalibration jev-era values -- refit blocked on labeled-row volume, see LOGBOOK.
     gate_threshold=0.8,
     min_confidence=0.6,
     min_margin=0.15,

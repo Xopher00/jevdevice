@@ -50,14 +50,19 @@ def fuzzy_narrow(goal: str, candidates: list[str], limit: int = 20) -> list[str]
     return [c for _, c in scored[:limit]]
 
 
+def margin(probabilities: dict[str, float]) -> float:
+    """Gap between the top two picks (or the sole pick's own probability)."""
+    ranked = sorted(probabilities.values(), reverse=True)
+    return ranked[0] - ranked[1] if len(ranked) >= 2 else ranked[0]
+
+
 def confidence_gate(probabilities: dict[str, float], confidence: float, min_confidence: float = 0.6, min_margin: float = 0.15) -> tuple[bool, str]:
     """No action below threshold — escalate instead of acting on a close or unsure pick."""
-    ranked = sorted(probabilities.values(), reverse=True)
-    margin = ranked[0] - ranked[1] if len(ranked) >= 2 else ranked[0]
+    gap = margin(probabilities)
     if confidence < min_confidence:
         return False, f"confidence {confidence:.2f} below {min_confidence}"
-    if margin < min_margin:
-        return False, f"margin {margin:.2f} below {min_margin} (top two picks too close)"
+    if gap < min_margin:
+        return False, f"margin {gap:.2f} below {min_margin} (top two picks too close)"
     return True, "ok"
 
 

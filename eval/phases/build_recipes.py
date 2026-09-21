@@ -42,14 +42,15 @@ def main() -> int:
             return 2
     heldout = splitguard.heldout_goal_ids()
     journal = DecisionJournal()
+    rows = journal.replay()  # one full journal scan, shared with verify_recipe below
     # Fail-closed on contamination: recipes_from_journal raises on any held-out
     # goal unless the operator explicitly excluded it above (card-recorded).
-    built = recipes_from_journal(journal, heldout_goal_ids=frozenset(heldout - exclude))
+    built = recipes_from_journal(journal, heldout_goal_ids=frozenset(heldout - exclude), rows=rows)
     store = RecipeStore()
     for recipe in built.values():
         store.upsert(recipe)
     # every stored recipe must replay to its verified outcome
-    unreplayable = [r.recipe_id for r in store.all() if not verify_recipe(r, journal)]
+    unreplayable = [r.recipe_id for r in store.all() if not verify_recipe(r, journal, rows=rows)]
     store_goal_ids = {r.recipe_id for r in store.all()}
     assert not (store_goal_ids & heldout), "held-out goal leaked into the recipe store"
     card = {

@@ -180,6 +180,16 @@ class DecisionJournal:
         encoding = "utf8" if isinstance(value, str) else "json"
         return {"blob": {**self.blobs.put(encoded), "encoding": encoding}}
 
+    def _record(self, row_type: str, fields: dict) -> None:
+        """Shared write path: fail-open (telemetry must never break the caller)."""
+        if not self.enabled:
+            return
+        row = {"type": row_type, "ts": self.clock().isoformat(timespec="milliseconds"), **fields}
+        try:
+            self._append({key: self._blobify(value) for key, value in row.items()})
+        except Exception as exc:  # noqa: BLE001
+            print(f"journal write failed: {exc}")
+
     def record_decision(
         self, *, call_id: str, engine: str, model_revision: str, phase: str | None = None,
         state=None, questions=None, answers=None, truncation=None, usage=None, error=None,
@@ -190,38 +200,16 @@ class DecisionJournal:
         """One row per ask(): the full replayable decision. `answers` is the FULL
         distribution (probabilities/confidence/noul), not just the winning pick;
         on failure `answers` is None and `error` carries the message.
-        elapsed_ms: this ask()'s wall time. shadow_of: set only on
-        shadow rows -- the primary row's call_id this observation shadows; a
-        None value means the row IS a primary decision (analytics key off
-        this, so a shadow row can never be mistaken for a real one).
-        generated: escape-hatch provenance -- the source of a runtime-
-        generated question (e.g. "propose_tap.fit_instructions_override");
-        None means every question came from the frozen question set."""
-        if not self.enabled:
-            return
-        row = {
-            "type": DECISION,
-            "ts": self.clock().isoformat(timespec="milliseconds"),
-            "call_id": call_id,
-            "goal_id": goal_id,
-            "goal": goal,
-            "engine": engine,
-            "model_revision": model_revision,
-            "phase": phase or UNLABELED,
-            "state": state,
-            "questions": questions,
-            "answers": answers,
-            "truncation": truncation,
-            "usage": usage,
-            "error": error,
-            "elapsed_ms": elapsed_ms,
-            "shadow_of": shadow_of,
-            "generated": generated,
-        }
-        try:
-            self._append({key: self._blobify(value) for key, value in row.items()})
-        except Exception as exc:  # noqa: BLE001 -- fail-open: telemetry must never break the decision path
-            print(f"journal write failed: {exc}")
+        shadow_of: the primary row's call_id this observation shadows; None
+        means the row IS a primary decision. generated: the source of a
+        runtime-generated question; None means it came from the frozen set."""
+        self._record(DECISION, {
+            "call_id": call_id, "goal_id": goal_id, "goal": goal, "engine": engine,
+            "model_revision": model_revision, "phase": phase or UNLABELED, "state": state,
+            "questions": questions, "answers": answers, "truncation": truncation,
+            "usage": usage, "error": error, "elapsed_ms": elapsed_ms,
+            "shadow_of": shadow_of, "generated": generated,
+        })
 
     def record_outcome(
         self, *, call_id: str | None = None, executed_command: str | None = None,
@@ -236,59 +224,26 @@ class DecisionJournal:
         """One row per execution-flow event (ran / needs approval / denied),
         joined to its decision row(s) by call_id. `executed` lists EVERY command
         a multi-command action ran (scroll_to_find's swipes), while
-        `executed_command` carries just the last one. `kind` names the
-        ACTION_KINDS kind that ran (recipe chains key on it). `tier`/`recipe_id`
+        `executed_command` carries just the last one. `tier`/`recipe_id`
         appear only on planner-driven rows."""
-        if not self.enabled:
-            return
-        row = {
-            "type": OUTCOME,
-            "ts": self.clock().isoformat(timespec="milliseconds"),
-            "call_id": call_id,
-            "goal_id": goal_id,
-            "goal": goal,
-            "device": device,
-            "executed_command": executed_command,
-            "verification": verification,
-            "status": status,
-            "recovery_command": recovery_command,
-            "graph_edge": graph_edge,
-            "decision": decision,
-            "reasons": reasons,
-            "exit_code": exit_code,
-            "satisfied": satisfied,
-            "executed": list(executed) if executed else None,
-            "kind": kind,
-            "tier": tier,
-            "recipe_id": recipe_id,
-        }
-        try:
-            self._append({key: self._blobify(value) for key, value in row.items()})
-        except Exception as exc:  # noqa: BLE001 -- fail-open: telemetry must never break the action path
-            print(f"journal write failed: {exc}")
+        self._record(OUTCOME, {
+            "call_id": call_id, "goal_id": goal_id, "goal": goal, "device": device,
+            "executed_command": executed_command, "verification": verification,
+            "status": status, "recovery_command": recovery_command, "graph_edge": graph_edge,
+            "decision": decision, "reasons": reasons, "exit_code": exit_code,
+            "satisfied": satisfied, "executed": list(executed) if executed else None,
+            "kind": kind, "tier": tier, "recipe_id": recipe_id,
+        })
 
     def record_calibration(
         self, *, event: str, engine: str | None = None, provenance: dict | None = None,
         result: dict | None = None,
     ) -> None:
-        """One row per continuous-calibration loop run: the proposed
-        fits (or the documented non-proposal), the shadow-run verdicts under
-        current vs proposed thresholds, and the window provenance. Additive
-        row type -- replay() yields it like any other row."""
-        if not self.enabled:
-            return
-        row = {
-            "type": CALIBRATION,
-            "ts": self.clock().isoformat(timespec="milliseconds"),
-            "event": event,
-            "engine": engine,
-            "provenance": provenance,
-            "result": result,
-        }
-        try:
-            self._append({key: self._blobify(value) for key, value in row.items()})
-        except Exception as exc:  # noqa: BLE001 -- fail-open: telemetry must never break the decision path
-            print(f"journal write failed: {exc}")
+        """One row per continuous-calibration loop run: the proposed fits (or
+        the documented non-proposal), shadow-run verdicts, and provenance."""
+        self._record(CALIBRATION, {
+            "event": event, "engine": engine, "provenance": provenance, "result": result,
+        })
 
     # -- reading ---------------------------------------------------------
 

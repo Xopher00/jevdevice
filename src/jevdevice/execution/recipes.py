@@ -135,14 +135,18 @@ def _compress(steps: list[RecipeStep]) -> list[RecipeStep]:
     return kept
 
 
-def recipes_from_journal(journal, *, heldout_goal_ids: frozenset[str] = frozenset()) -> dict[str, Recipe]:
+def recipes_from_journal(
+    journal, *, heldout_goal_ids: frozenset[str] = frozenset(), rows: list[dict] | None = None,
+) -> dict[str, Recipe]:
     """Every derivable recipe, keyed by goal_id. Outcome rows carry what a
     step needs (kind, graph_edge, command, call_id); decision rows are not
     read. Raises ValueError if a held-out goal would enter the store: a
-    recipe is training data and the dev/held-out split must hold."""
+    recipe is training data and the dev/held-out split must hold.
+    `rows`: pass an already-materialized `journal.replay()` to skip a second
+    full replay when the caller also calls verify_recipe right after."""
     by_goal: dict[str, list[dict]] = {}
     goal_text: dict[str, str] = {}
-    for row in journal.replay():
+    for row in rows if rows is not None else journal.replay():
         if row.get("type") != decision_log.OUTCOME or not row.get("goal_id"):
             continue
         goal_id = row["goal_id"]
@@ -153,7 +157,7 @@ def recipes_from_journal(journal, *, heldout_goal_ids: frozenset[str] = frozense
         raise ValueError(f"held-out goals found in journal, refusing to build recipes: {contaminated}")
     question_set = load_question_set().version
     recipes: dict[str, Recipe] = {}
-    for goal_id, rows in by_goal.items():
+    for goal_id, goal_rows in by_goal.items():
         chain = [
             RecipeStep(
                 kind=row["kind"], goal=row.get("goal") or goal_text.get(goal_id, ""),
@@ -162,7 +166,7 @@ def recipes_from_journal(journal, *, heldout_goal_ids: frozenset[str] = frozense
                 to_node=(row.get("graph_edge") or {}).get("to_node"),
                 call_id=row.get("call_id"),
             )
-            for row in _final_chain(rows)
+            for row in _final_chain(goal_rows)
             # device-verified steps only: dead ends (failed/escalated/unconfirmed
             # attempts) are the journey, not the chain
             if row.get("verification") == decision_log.VERIFIED
@@ -175,19 +179,21 @@ def recipes_from_journal(journal, *, heldout_goal_ids: frozenset[str] = frozense
         goal = goal_text.get(goal_id) or chain[-1].goal
         recipes[goal_id] = Recipe(
             recipe_id=goal_id, goal=goal, goal_id=goal_id, steps=chain,
-            embedding=embed(goal), created=rows[-1].get("ts", ""),
+            embedding=embed(goal), created=goal_rows[-1].get("ts", ""),
             question_set=question_set,
         )
     return recipes
 
 
-def verify_recipe(recipe: Recipe, journal) -> bool:
+def verify_recipe(recipe: Recipe, journal, *, rows: list[dict] | None = None) -> bool:
     """A stored recipe replays to its verified outcome: every step's call_id
     must exist in the journal as a VERIFIED outcome row (missing/failed steps
-    mean the recipe drifted from device truth and must be re-captured)."""
+    mean the recipe drifted from device truth and must be re-captured).
+    `rows`: see recipes_from_journal -- pass the same materialized replay to
+    avoid a second full journal scan."""
     verified_call_ids = {
         row.get("call_id")
-        for row in journal.replay()
+        for row in (rows if rows is not None else journal.replay())
         if row.get("type") == decision_log.OUTCOME and row.get("verification") == decision_log.VERIFIED
     }
     return all(step.call_id in verified_call_ids for step in recipe.steps if step.call_id)

@@ -32,8 +32,11 @@ SERVICE_CASES = [
 
 
 async def run_cases(jev, candidates, cases, *, instructions, fit_instructions):
-    for category, goal in cases:
-        verdict = await narrow_and_pick(jev, goal, candidates, instructions=instructions, fit_instructions=fit_instructions)
+    verdicts = await asyncio.gather(*(
+        narrow_and_pick(jev, goal, candidates, instructions=instructions, fit_instructions=fit_instructions)
+        for _, goal in cases
+    ))
+    for (category, goal), verdict in zip(cases, verdicts):
         print(f"{category:<32} {goal!r:<32} ok={verdict.ok!s:<6} choice={verdict.choice} "
               f"confidence={verdict.confidence:.2f} fit={verdict.fit:.2f} best_fit={verdict.best_fit:.2f}")
         if not verdict.ok:

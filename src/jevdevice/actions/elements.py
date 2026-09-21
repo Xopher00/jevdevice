@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from functools import lru_cache
 
 from jevdevice.budget import current_profile
 from jevdevice.device import Device
@@ -32,17 +33,9 @@ def foreground_package(dump_xml: str) -> str | None:
 
 @dataclass
 class Element:
-    """One real on-screen element.
-
-    ACI-aligned observation keys, mapped onto what this parser already emits
-    (role/text/bbox/interactable -- no fields invented for devices we don't
-    have): `role` is the Android class noun (_CLASS_NOUNS: button, text field,
-    toggle...); `text` the node's real text; `bounds` (+ the x/y center)
-    is the device-reported bbox; `interactable` is not a stored field -- it is
-    WHICH parse_* family selected the node (parse_actionable_elements =
-    tappable, parse_long_clickable_elements = long-pressable,
-    parse_editable_elements = text-input), Android's own signal, never a
-    per-app guess."""
+    """One real on-screen element. `interactable` is not a stored field -- it
+    is WHICH parse_* family selected the node (tappable/long-pressable/
+    text-input), Android's own signal, never a per-app guess."""
     x: int
     y: int
     bounds: str  # real device-reported bounds string, e.g. "[166,1173][415,1615]" -- passed to the gate as evidence
@@ -121,14 +114,22 @@ def _context_identity(node, parent_of: dict, class_name: str) -> tuple[str, str]
     return None
 
 
+@lru_cache(maxsize=2)
+def _parsed_tree(dump_xml: str):
+    """One parse + ancestor map per dump, shared across the parse_*_elements
+    calls screen_summary makes back-to-back on the same dump_xml string."""
+    root = ET.fromstring(dump_xml)
+    parent_of = {child: parent for parent in root.iter() for child in parent}
+    return root, parent_of
+
+
 def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, label_context: bool = False) -> dict[str, Element]:
     """Every real node passing `is_match` (a real Android accessibility signal, never a
     per-app guess), described by whichever of its own real fields are non-empty. A labeled
     node that fails `is_match` but has a real ancestor matching `ancestor_attr` still counts,
     using that ancestor's bounds as the real tap target. `label_context` additionally keeps a
     matching node that has none of its own descriptive fields, labeled from a real ancestor."""
-    root = ET.fromstring(dump_xml)
-    parent_of = {child: parent for parent in root.iter() for child in parent}
+    root, parent_of = _parsed_tree(dump_xml)
     elements: dict[str, Element] = {}
     for node in root.iter("node"):
         attrs = node.attrib
