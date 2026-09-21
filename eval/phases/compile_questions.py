@@ -31,7 +31,8 @@ REPO = Path(__file__).resolve().parent.parent.parent
 from jevdevice.decision_log import DecisionJournal
 
 GOLDEN_PHASES = {"recall", "ground", "fill", "gate", "verify", "kind"}
-ARTIFACT = REPO / "src" / "jevdevice" / "question_sets" / "v1.yaml"
+QUESTION_SETS_DIR = REPO / "src" / "jevdevice" / "question_sets"
+ARTIFACT = QUESTION_SETS_DIR / "v1.yaml"
 
 # Pre-freeze wordings the journal still carries (one dev iteration on
 # 2026-09-20 before the wording landed); no current source emits them.
@@ -107,7 +108,11 @@ def match_template(instructions: str, templates: dict[str, str], slots: dict) ->
     return None
 
 
-def validate_journal_rows() -> tuple[Counter, Counter, list[str]]:
+def validate_journal_rows(templates: dict[str, str], coverage: dict[str, str] | None = None) -> tuple[Counter, Counter, list[str]]:
+    """`templates` is the artifact being validated (its witnesses get stamped);
+    `coverage` is the union over ALL frozen versions -- an instance that only a
+    later version covers is not a miss (each family's wordings live in its own
+    frozen artifact)."""
 
     witnesses: Counter = Counter()
     unmatched: Counter = Counter()
@@ -130,25 +135,40 @@ def validate_journal_rows() -> tuple[Counter, Counter, list[str]]:
         slots = {"__candidates__": candidates, **{k: v for k, v in state.items() if k not in ("candidates",)}}
         for qname, q in questions.items():
             instructions = q.get("instructions") or ""
-            hit = match_one(instructions, slots=slots)
+            hit = match_one(instructions, slots=slots, templates=templates)
             if hit:
                 witnesses[hit] += 1
             elif any(instructions.startswith(prefix) for prefix in JUSTIFIED_UNMATCHED_PREFIXES):
                 notes.append(f"justified (pre-freeze wording): {instructions[:70]}")
+            elif coverage is not None and match_one(instructions, slots=slots, templates=coverage):
+                notes.append(f"covered by another frozen version: {instructions[:70]}")
             else:
                 unmatched[f"{phase}.{qname}: {instructions[:90]}"] += 1
     return witnesses, unmatched, notes
 
 
-def load_templates() -> dict[str, str]:
+def load_templates(path: Path | None = None) -> dict[str, str]:
     import yaml
 
-    raw = yaml.safe_load(ARTIFACT.read_text(encoding="utf-8"))
+    raw = yaml.safe_load((path or ARTIFACT).read_text(encoding="utf-8"))
     return {qid: entry["instructions"] for qid, entry in raw["questions"].items()}
 
 
-def match_one(instructions: str, slots: dict) -> str | None:
-    return match_template(instructions, load_templates(), slots)
+def union_templates() -> dict[str, str]:
+    """Every frozen version's templates, keyed version:question_id so per-version
+    differences in the same id stay distinguishable."""
+    import yaml
+
+    out: dict[str, str] = {}
+    for path in sorted(QUESTION_SETS_DIR.glob("v*.yaml")):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for qid, entry in (raw.get("questions") or {}).items():
+            out[f"{raw['version']}:{qid}"] = entry["instructions"]
+    return out
+
+
+def match_one(instructions: str, slots: dict, templates: dict[str, str]) -> str | None:
+    return match_template(instructions, templates, slots)
 
 
 def validate_fused_prefix(templates: dict[str, str]) -> list[str]:
@@ -166,11 +186,10 @@ def validate_fused_prefix(templates: dict[str, str]) -> list[str]:
     return problems
 
 
-def validate_constants() -> list[str]:
+def validate_constants(templates: dict[str, str]) -> list[str]:
     import importlib
 
     problems = []
-    templates = load_templates()
     for module_name, attr, question_id in CONSTANT_IDS:
         actual = getattr(importlib.import_module(module_name), attr, None)
         if actual is None:
@@ -180,23 +199,34 @@ def validate_constants() -> list[str]:
     return problems
 
 
-def stamp_witnesses(witnesses: Counter) -> None:
+def stamp_witnesses(witnesses: Counter, path: Path | None = None) -> None:
     """Stamp validated: + witness_n onto each entry (calibration provenance)."""
     import yaml
 
-    raw = yaml.safe_load(ARTIFACT.read_text(encoding="utf-8"))
+    artifact = path or ARTIFACT
+    raw = yaml.safe_load(artifact.read_text(encoding="utf-8"))
     for question_id, entry in raw["questions"].items():
         n = witnesses.get(question_id, 0)
         entry["witness_n"] = n
         entry["validated"] = n > 0
-    ARTIFACT.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100), encoding="utf-8")
+    artifact.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True, width=100), encoding="utf-8")
 
 
 def main() -> int:
-    witnesses, unmatched, _notes = validate_journal_rows()
-    problems = validate_fused_prefix(load_templates()) + validate_constants()
-    templates = load_templates()
-    print(f"artifact entries: {len(templates)}")
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--set", default="v1",
+                        help="which frozen question-set artifact to validate (default v1)")
+    args = parser.parse_args()
+    artifact = QUESTION_SETS_DIR / f"{args.set}.yaml"
+    if not artifact.is_file():
+        print(f"unknown question set: {artifact}")
+        return 2
+    templates = load_templates(artifact)
+    witnesses, unmatched, _notes = validate_journal_rows(templates, coverage=union_templates())
+    problems = validate_fused_prefix(templates) + validate_constants(templates)
+    print(f"artifact: {artifact.relative_to(REPO)} ({len(templates)} entries)")
     print(f"witnessed: {sum(witnesses.values())} journal instances across {len(witnesses)} templates")
     for question_id, n in sorted(witnesses.items()):
         print(f"  {n:>4}x  {question_id}")
@@ -215,7 +245,7 @@ def main() -> int:
             print(f"  - {problem}")
     if unmatched or problems:
         return 1
-    stamp_witnesses(witnesses)
+    stamp_witnesses(witnesses, artifact)
     print("OK: artifact validated against the journal instances and the module constants; witness counts stamped")
     return 0
 

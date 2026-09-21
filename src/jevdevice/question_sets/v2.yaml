@@ -1,8 +1,8 @@
-version: v1
+version: v2
 compiled: '2026-09-21'
-source: ui.py/gate.py/services.py/dispatch.py/app_launch.py/narrowing.py literals at the 12 ask() call
-  sites
-labeled_source: decision journal (~/.jevdevice/journal); see eval/phases/finetune/dataset_card.json
+source: extends v1 with the cli.* family wordings; every v1 entry is byte-identical
+labeled_source: decision journal (~/.jevdevice/journal); cli.* witnesses land with the first cli-family
+  runs
 questions:
   recall.any:
     type: noul
@@ -293,3 +293,30 @@ questions:
       Given screen, does that step still apply to the goal?
     witness_n: 0
     validated: false
+  cli.pick:
+    type: choice
+    phase: recall
+    instructions: Which ONE command answers this goal? candidate_commands lists the allowed candidates.
+    witness_n: 20
+    validated: true
+  cli.any_fit:
+    type: noul
+    phase: recall
+    instructions: Given candidate_commands, does any of them answer this goal?
+    witness_n: 20
+    validated: true
+  cli.safe:
+    type: noul
+    phase: gate
+    instructions: Does the proposed_command read out the system information chosen_action names, without
+      changing any state? Answer no if it changes state, targets something different, or chains an additional
+      command.
+    witness_n: 26
+    validated: true
+  cli.satisfied:
+    type: noul
+    phase: verify
+    instructions: probe_output is the real stdout of the command that ran. Given probe_output, is the
+      goal answered?
+    witness_n: 10
+    validated: true

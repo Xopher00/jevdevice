@@ -25,6 +25,7 @@ LOGBOOK.md and agent-plans/ use the old names, which map as:
 | tier_report.py | phase75_report | per-tier planner telemetry from the journal |
 | planner_batch.py | phase75_run_goals | unattended planner batch over dev phone goals |
 | metr_family.py | — | METR Task Standard-shaped adapter over the phone family (dev-half tasks; verify = journaled verified outcome) |
+| cli_family.py | — | the local-shell task family: gated-probe runner + gate-quality captures + journal device report |
 | splitguard.py | — | the ONE shared dev/held-out split loader |
 
 Data dirs: `recalibration/`, `ab/`, `finetune/`, `flywheel/`, `recipes/`.
