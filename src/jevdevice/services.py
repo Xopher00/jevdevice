@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
 from .common import gated
+from .device import Device
 from .gate import (
     ClosedSetProposal,
     CommandVariant,
@@ -24,7 +25,6 @@ from .gate import (
 )
 from .jev import JevClient
 from .narrowing import narrow_and_pick
-from .transport import AdbTransport
 
 # svc's controllable services are a small, genuinely fixed set (not app-specific).
 TOGGLEABLE_SERVICES = {"bluetooth": None, "nfc": None, "data": None}
@@ -94,7 +94,7 @@ class ToggleProposal:
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
 
 
-async def propose_toggle(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> ToggleProposal:
+async def propose_toggle(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> ToggleProposal:
     if verbose:
         print("--- step 2: Jev fills the two closed-set arguments (batched) ---")
     profile = current_profile(jev.engine_name)
@@ -142,11 +142,11 @@ class ToggleOutcome:
 
 
 async def execute_toggle(
-    jev: JevClient, transport: AdbTransport, goal: str, service: str, command: CommandVariant, *, verbose: bool = True,
+    jev: JevClient, device: Device, goal: str, service: str, command: CommandVariant, *, verbose: bool = True,
 ) -> ToggleOutcome:
     if verbose:
         print("--- step 4/5: real mutating command + real service enumeration (independent, run concurrently) ---")
-    result, services_raw = await asyncio.gather(transport.run(command.command), transport.run("dumpsys -l"))
+    result, services_raw = await asyncio.gather(device.run(command.command), device.run("dumpsys -l"))
     if verbose:
         print(f"exit_code={result.exit_code}")
     services = parse_dumpsys_services(services_raw.stdout)
@@ -168,7 +168,7 @@ async def execute_toggle(
 
     if verbose:
         print("--- step 6: real check + Jev verify ---")
-    check = await transport.run(f"dumpsys {check_service}")
+    check = await device.run(f"dumpsys {check_service}")
     # The raw status text rides in state under the answering engine's profile
     # budget -- the clip is a named knob (budget.py), never a bare int.
     verify = await jev.ask(
@@ -196,19 +196,19 @@ async def propose_keyevent(jev: JevClient, goal: str, *, verbose: bool = True) -
     )
 
 
-async def execute_command(transport: AdbTransport, command: CommandVariant) -> int:
+async def execute_command(device: Device, command: CommandVariant) -> int:
     """Run an already-gated single command; the exit code is all there is to report.
     Shared by keyevent/swipe/set_dnd -- their proposals differ only in how the command
     is built; none can carry a hidden extra effect once gated."""
-    result = await transport.run(command.command)
+    result = await device.run(command.command)
     return result.exit_code
 
 
-async def take_screenshot(transport: AdbTransport) -> bytes:
+async def take_screenshot(device: Device) -> bytes:
     """No candidates, no ambiguity, always safe (screencap is in
     gate.READ_ONLY_PREFIXES) -- same reasoning dumpsys uses to skip the gate
     entirely. exec-out streams the PNG on stdout; nothing is written to the device."""
-    return await transport.run_binary("screencap -p")
+    return await device.run_binary("screencap -p")
 
 
 async def propose_dnd(jev: JevClient, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
@@ -238,10 +238,10 @@ class DumpsysOutcome:
     call_id: str | None = None
 
 
-async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> DumpsysOutcome:
+async def run_dumpsys_query(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> DumpsysOutcome:
     if verbose:
         print("--- step 2: real probe for the open argument's real enumeration ---")
-    services_raw = await transport.run("dumpsys -l")
+    services_raw = await device.run("dumpsys -l")
     services = parse_dumpsys_services(services_raw.stdout)
     if verbose:
         print(f"parsed {len(services)} real dumpsys services (no model)\n")
@@ -263,7 +263,7 @@ async def run_dumpsys_query(jev: JevClient, transport: AdbTransport, goal: str, 
 
     if verbose:
         print(f"--- step 4: code builds the command deterministically: dumpsys {verdict.choice} ---")
-    result = await transport.run(f"dumpsys {verdict.choice}")
+    result = await device.run(f"dumpsys {verdict.choice}")
     parsed = parse_key_value(result.stdout)
     if verbose:
         print(f"parsed {len(parsed)} key:value pairs (no model)\n")

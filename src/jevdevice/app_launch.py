@@ -9,10 +9,10 @@ from dataclasses import dataclass
 
 from . import question_sets
 from .budget import current_profile
+from .device import Device
 from .elements import dump_screen, foreground_package
 from .jev import JevClient
 from .narrowing import narrow_and_pick
-from .transport import AdbTransport
 
 
 def parse_package_list(raw: str) -> list[str]:
@@ -20,7 +20,7 @@ def parse_package_list(raw: str) -> list[str]:
 
 
 async def verify_with_retry(
-    jev: JevClient, transport: AdbTransport, goal: str, chosen: str,
+    jev: JevClient, device: Device, goal: str, chosen: str,
     delays: tuple[float, ...] = (0.0, 0.0, 0.0),
 ) -> tuple[bool, float, int, str]:
     """Real launches race a settling UI; retry with backoff. `dumpsys window`'s
@@ -30,7 +30,7 @@ async def verify_with_retry(
     observed = None
     for attempt, delay in enumerate(delays, start=1):
         await asyncio.sleep(delay)
-        observed = foreground_package(await dump_screen(transport))
+        observed = foreground_package(await dump_screen(device))
         answers = await jev.ask(
             {"goal": goal, "chosen_package": chosen, "foreground_package": observed, "attempt": attempt},
             {"satisfied": question_sets.noul("open_app.verify_satisfied")},
@@ -56,10 +56,10 @@ class LaunchOutcome:
     call_id: str | None = None
 
 
-async def launch_app_for_goal(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> LaunchOutcome:
+async def launch_app_for_goal(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> LaunchOutcome:
     """Real package listing -> two-round semantic narrow (narrowing.py) -> gate
     -> `monkey` launch -> Jev-verified retry."""
-    probe = await transport.run("pm list packages")
+    probe = await device.run("pm list packages")
     packages = parse_package_list(probe.stdout)
 
     verdict = await narrow_and_pick(
@@ -76,8 +76,8 @@ async def launch_app_for_goal(jev: JevClient, transport: AdbTransport, goal: str
         return LaunchOutcome(None, verdict.confidence, False, 0.0, 0, "", tuple(verdict.reasons), call_id=verdict.call_id)
     package = verdict.choice
 
-    await transport.run(f"monkey -p {package} 1")
-    launched, satisfied, attempts, observed = await verify_with_retry(jev, transport, goal, package)
+    await device.run(f"monkey -p {package} 1")
+    launched, satisfied, attempts, observed = await verify_with_retry(jev, device, goal, package)
     if verbose:
         print(f"foreground: {observed}")
         print(f"goal met: {launched} (noul={satisfied:.2f}, after {attempts} attempt(s))")

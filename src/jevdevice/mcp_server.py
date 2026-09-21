@@ -67,9 +67,12 @@ def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: flo
 
 
 def _emit_outcome(**kw) -> None:
-    """Outcome-row emission bound to this server's transport (the shared
-    implementation is outcomes.emit_outcome; journaling is fail-open)."""
-    outcomes.emit_outcome(transport=transport, **kw)
+    """Outcome-row emission bound to this server's device (the shared
+    implementation is outcomes.emit_outcome; journaling is fail-open).
+    The module-level variable keeps its historical name `transport` -- an
+    existing test reads mcp_server.transport.serial -- but now holds the
+    Device-protocol object (AdbDevice), not the raw AdbTransport."""
+    outcomes.emit_outcome(device=transport, **kw)
 
 
 @dataclass

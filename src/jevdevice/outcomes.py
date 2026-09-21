@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 
 from . import decision_log
+from .device import Device
 from .elements import dump_screen, foreground_package
 
 ENV_GRAPH_EDGE = "JEV_GRAPH_EDGE"  # "0"/"off" disables the before/after foreground dumps
@@ -36,29 +37,29 @@ def verification_from_response(response: dict) -> str:
     return decision_log.NONE
 
 
-async def foreground_safe(transport) -> str | None:
+async def foreground_safe(device: Device) -> str | None:
     """Foreground app name for graph_edge rows; None when the knob is off or
     the dump fails (telemetry loss, never an execution failure)."""
     if not graph_edge_enabled():
         return None
     try:
-        return foreground_package(await dump_screen(transport))
+        return foreground_package(await dump_screen(device))
     except Exception:  # noqa: BLE001 -- telemetry only
         return None
 
 
-async def graph_edge_around(transport, run) -> tuple:
+async def graph_edge_around(device: Device, run) -> tuple:
     """Run `run()` bracketed with foreground dumps -> (outcome, edge). The
     edge is None when the knob is off or either dump fails."""
-    before = await foreground_safe(transport)
+    before = await foreground_safe(device)
     outcome = await run()
-    after = await foreground_safe(transport)
+    after = await foreground_safe(device)
     edge = {"from_node": before, "to_node": after} if (before or after) else None
     return outcome, edge
 
 
 def emit_outcome(
-    *, transport=None, call_id: str | None = None, executed_command: str | None = None,
+    *, device: Device | None = None, call_id: str | None = None, executed_command: str | None = None,
     verification: str = decision_log.NONE, status: str | None = None, response: dict | None = None,
     recovery_command: str | None = None, graph_edge: dict | None = None,
     decision: str | None = None, executed: list | None = None,
@@ -68,7 +69,9 @@ def emit_outcome(
     """Fire-and-forget outcome row. `response`, when given, supplies the
     status/reasons/exit_code/satisfied fields verbatim (explicit `reasons`
     wins); `kind` names the action kind that ran; `tier`/`recipe_id` appear
-    only on planner-driven rows."""
+    only on planner-driven rows. The journal's `device` column comes from
+    Device.name (the protocol's journal identity), so rows from a second
+    device family separate without engine changes."""
     exit_code = satisfied = None
     if response is not None:
         status = response.get("status", status)
@@ -80,7 +83,7 @@ def emit_outcome(
     decision_log.get_journal().record_outcome(
         call_id=call_id, executed_command=executed_command, verification=verification,
         status=status, recovery_command=recovery_command, graph_edge=graph_edge,
-        device=getattr(transport, "serial", None), decision=decision,
+        device=getattr(device, "name", None) if device is not None else None, decision=decision,
         reasons=reasons, exit_code=exit_code, satisfied=satisfied,
         goal=goal, goal_id=goal_id, executed=executed,
         kind=kind, tier=tier, recipe_id=recipe_id,

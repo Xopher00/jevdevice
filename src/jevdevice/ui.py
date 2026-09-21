@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from . import question_sets
 from .budget import choice_criteria, current_profile, is_abstain
+from .device import Device
 from .elements import (
     Element,
     describe_screen,
@@ -40,7 +41,6 @@ from .jev import Choice, JevClient, Noul
 from .matching import NarrowVerdict, decide, extract_value_spans, fuzzy_narrow
 from .narrowing import _abstain_verdict, extract_fits, fit_questions, narrow_and_pick
 from .services import execute_command
-from .transport import AdbTransport
 
 # These module constants are SOURCED from the
 # versioned artifact (question_sets/v1.yaml) so calibrate/ CLIs and tests that
@@ -171,7 +171,7 @@ async def _cached_or_narrow(
 
 
 async def _propose_gesture(
-    jev: JevClient, transport: AdbTransport, goal: str, *,
+    jev: JevClient, device: Device, goal: str, *,
     parse_elements, pick_instructions: str, fit_instructions: str, safe_fused_id: str,
     safe_question_id: str, command_for, chosen_label_for, verbose: bool = True,
     fit_generated_source: str | None = None,
@@ -181,7 +181,7 @@ async def _propose_gesture(
     safe_fused_id/safe_question_id are frozen question-set ids (tap vs long_press).
     fit_generated_source != None marks the fit family as an escape-hatch generation."""
     safe_instructions = question_sets.text(safe_question_id)
-    dump_xml = await dump_screen(transport)
+    dump_xml = await dump_screen(device)
     elements = parse_elements(dump_xml)
     if verbose:
         print(f"{len(elements)} real matching elements on screen")
@@ -237,7 +237,7 @@ async def _propose_gesture(
 
 
 async def propose_tap(
-    jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
+    jev: JevClient, device: Device, goal: str, *, verbose: bool = True,
     fit_instructions: str | None = None,
 ) -> TapProposal:
     """Narrow real on-screen elements + gate the resulting tap. No execution. The fit wording
@@ -246,7 +246,7 @@ async def propose_tap(
     a RUNTIME-GENERATED question (the escalation escape hatch): it is journaled with
     generated=<source> and is eligible for promotion into the next compiled question set."""
     return await _propose_gesture(
-        jev, transport, goal,
+        jev, device, goal,
         parse_elements=parse_actionable_elements,
         pick_instructions=question_sets.text("tap.pick"),
         fit_instructions=fit_instructions or question_sets.text("tap.fit"),
@@ -263,14 +263,14 @@ LONG_PRESS_SAFE_INSTRUCTIONS = question_sets.text("long_press.safe")
 
 
 async def propose_long_press(
-    jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
+    jev: JevClient, device: Device, goal: str, *, verbose: bool = True,
     fit_instructions: str | None = None,
 ) -> TapProposal:
     """Narrow real long-clickable elements + gate the resulting long-press. No execution --
     execute_tap runs it (a long-press is just `input swipe` with start==end). Same escape-hatch
     rule as propose_tap: an explicit fit_instructions override is runtime-generated and journaled."""
     return await _propose_gesture(
-        jev, transport, goal,
+        jev, device, goal,
         parse_elements=parse_long_clickable_elements,
         pick_instructions=question_sets.text("long_press.pick"),
         fit_instructions=fit_instructions or question_sets.text("long_press.fit"),
@@ -290,9 +290,9 @@ DIRECTIONS = {"up": None, "down": None, "left": None, "right": None}
 SWIPE_SAFE_INSTRUCTIONS = question_sets.text("swipe.safe")
 
 
-async def propose_swipe(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
+async def propose_swipe(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
     """Pick one of the four real swipe directions for the goal + gate it. No execution."""
-    width, height = await transport.window_size()
+    width, height = await device.window_size()
     cx, cy = width // 2, height // 2
     dx, dy = int(width * 0.3), int(height * 0.3)
     # A "down" scroll (reveal content further down) is a physical swipe upward: finger starts
@@ -333,7 +333,7 @@ class ScrollToFindOutcome:
 
 
 async def scroll_to_find(
-    jev: JevClient, transport: AdbTransport, goal: str, *,
+    jev: JevClient, device: Device, goal: str, *,
     direction: str = "down", max_attempts: int = 8, verbose: bool = True,
 ) -> ScrollToFindOutcome:
     """Re-checks the real screen against the goal every attempt and swipes only when the
@@ -342,7 +342,7 @@ async def scroll_to_find(
     executed: list[str] = []
     last_call_id: str | None = None
     for attempt in range(1, max_attempts + 1):
-        elements = parse_all_elements(await dump_screen(transport))
+        elements = parse_all_elements(await dump_screen(device))
         options = short_options(elements) if current_profile(jev.engine_name).short_labels else elements
         verdict = await narrow_and_pick(
             jev, goal, list(options),
@@ -356,7 +356,7 @@ async def scroll_to_find(
         if verdict.ok:
             return ScrollToFindOutcome(verdict.choice, attempt, call_id=verdict.call_id, executed=tuple(executed))
 
-        proposal = await propose_swipe(jev, transport, f"scroll {direction}", verbose=False)
+        proposal = await propose_swipe(jev, device, f"scroll {direction}", verbose=False)
         # Only proposal.ready runs here -- a needs_approval verdict stops the loop like
         # any other unapproved command, it is never executed implicitly.
         if proposal.ready is None:
@@ -365,12 +365,12 @@ async def scroll_to_find(
                 call_id=last_call_id, executed=tuple(executed),
             )
         executed.append(proposal.ready.command)
-        await execute_command(transport, proposal.ready)
+        await execute_command(device, proposal.ready)
     return ScrollToFindOutcome(None, max_attempts, reasons=(f"not found after {max_attempts} scrolls"), call_id=last_call_id, executed=tuple(executed))
 
 
 async def _verify_after_action(
-    jev: JevClient, transport: AdbTransport, goal: str, acted_on: str, *,
+    jev: JevClient, device: Device, goal: str, acted_on: str, *,
     delays: tuple[float, ...], verbose: bool,
 ) -> float:
     """Shared by execute_tap/execute_type: re-probe the real screen and ask
@@ -381,7 +381,7 @@ async def _verify_after_action(
         # A fixed-length raw-XML truncation can cut off the real evidence entirely (confirmed
         # live); compact per-element labels carry far more real signal per character.
         truncation: dict = {}
-        screen_after = describe_screen(await dump_screen(transport), goal=goal, limit=current_profile(jev.engine_name).screen_limit, telemetry=truncation)
+        screen_after = describe_screen(await dump_screen(device), goal=goal, limit=current_profile(jev.engine_name).screen_limit, telemetry=truncation)
         answers = await jev.ask(
             {"goal": goal, "acted_on": acted_on, "screen_after": screen_after},
             {"satisfied": question_sets.noul("verify.satisfied_after_action")},
@@ -396,26 +396,26 @@ async def _verify_after_action(
 
 
 async def _execute(
-    jev: JevClient, transport: AdbTransport, goal: str, element: str, command: CommandVariant, *,
+    jev: JevClient, device: Device, goal: str, element: str, command: CommandVariant, *,
     confidence: float, verify: bool, delays: tuple[float, ...], verbose: bool,
 ) -> ActionOutcome:
     """Shared by execute_tap/execute_type: run the approved command, then verify
     unless the caller opts out (see verify=False docstring on either wrapper)."""
-    await transport.run(command.command)
+    await device.run(command.command)
     if not verify:
         return ActionOutcome(element, confidence, True, 0.0, reasons=("verify skipped",))
-    satisfied = await _verify_after_action(jev, transport, goal, element, delays=delays, verbose=verbose)
+    satisfied = await _verify_after_action(jev, device, goal, element, delays=delays, verbose=verbose)
     return ActionOutcome(element, confidence, True, satisfied)
 
 
 async def execute_tap(
-    jev: JevClient, transport: AdbTransport, goal: str, element: str, command: CommandVariant, *,
+    jev: JevClient, device: Device, goal: str, element: str, command: CommandVariant, *,
     confidence: float = 0.0, verify: bool = True, delays: tuple[float, ...] = (0.0, 0.0, 0.0), verbose: bool = True,
 ) -> ActionOutcome:
     """Run an approved tap. verify=False skips the post-tap dump+Jev-ask
     (~2.9s) for a caller that will check the resulting state itself -- e.g.
     an agent sequencing several steps before its own screenshot/inspection."""
-    return await _execute(jev, transport, goal, element, command, confidence=confidence, verify=verify, delays=delays, verbose=verbose)
+    return await _execute(jev, device, goal, element, command, confidence=confidence, verify=verify, delays=delays, verbose=verbose)
 
 
 @dataclass
@@ -498,13 +498,13 @@ async def _fused_field_and_value(
 
 
 async def propose_type(
-    jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True,
+    jev: JevClient, device: Device, goal: str, *, verbose: bool = True,
     fit_instructions: str | None = None,
 ) -> TypeProposal:
     """Narrow real editable fields + extract/pick the real value to type + gate. No execution.
     The fit wording comes from the frozen question set (type_field.fit). An explicit override
     is the escalation escape hatch: runtime-generated and journaled (see propose_tap)."""
-    dump_xml = await dump_screen(transport)
+    dump_xml = await dump_screen(device)
     elements = parse_editable_elements(dump_xml)
     if verbose:
         print(f"{len(elements)} real editable elements on screen")
@@ -567,9 +567,9 @@ async def propose_type(
 
 
 async def execute_type(
-    jev: JevClient, transport: AdbTransport, goal: str, element: str, command: CommandVariant, *,
+    jev: JevClient, device: Device, goal: str, element: str, command: CommandVariant, *,
     confidence: float = 0.0, verify: bool = True, delays: tuple[float, ...] = (0.0, 0.0, 0.0), verbose: bool = True,
 ) -> ActionOutcome:
     """Run an approved type-into-field action. verify=False skips the
     post-action dump+Jev-ask, same tradeoff as execute_tap."""
-    return await _execute(jev, transport, goal, element, command, confidence=confidence, verify=verify, delays=delays, verbose=verbose)
+    return await _execute(jev, device, goal, element, command, confidence=confidence, verify=verify, delays=delays, verbose=verbose)

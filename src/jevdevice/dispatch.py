@@ -19,6 +19,7 @@ from .app_launch import launch_app_for_goal
 from .budget import choice_criteria, current_profile, is_abstain
 from .common import bootstrap, gated
 from .decision_log import ESCALATED, goal_scope
+from .device import Device
 from .elements import dump_screen, screen_summary
 from .gate import CommandVariant, confirm_with_human
 from .jev import JevClient
@@ -33,7 +34,6 @@ from .services import (
     run_dumpsys_query,
     take_screenshot,
 )
-from .transport import AdbTransport
 from .ui import (
     execute_tap,
     execute_type,
@@ -68,7 +68,7 @@ class KindPick:
     call_id: str | None = None  # journal linkage: escalated kind picks join their outcome row via this
 
 
-async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = None, *, verbose: bool = True) -> KindPick:
+async def pick_kind(jev: JevClient, goal: str, device: Device | None = None, *, verbose: bool = True) -> KindPick:
     """Which ONE atomic action kind this goal is asking for -- the calling agent
     (human at the CLI, or an LLM composing MCP tool calls) decides sequencing;
     this only ever resolves a single goal to a single kind. `transport`, when given,
@@ -81,9 +81,9 @@ async def pick_kind(jev: JevClient, goal: str, transport: AdbTransport | None = 
     # (kind.pick_screen) -- nothing is composed at runtime.
     kind_question_id = "kind.pick"
     truncation: dict = {}
-    if transport is not None:
+    if device is not None:
         try:
-            summary = screen_summary(await dump_screen(transport), goal=goal, telemetry=truncation)
+            summary = screen_summary(await dump_screen(device), goal=goal, telemetry=truncation)
             # on_screen's full label list dilutes confidence even on an unrelated
             # goal -- not worth it for kind selection.
             state["screen"] = {"foreground_package": summary["foreground_package"], "editable_fields": summary["editable_fields"]}
@@ -118,7 +118,7 @@ class KindHandler:
     """Normalizes one kind's real propose/execute signatures into one shape -- the single
     source run_toolkit (CLI) and mcp_server.py's device_do/device_approve (MCP) both dispatch
     through, so ACTION_KINDS and the actual dispatch can no longer silently drift apart."""
-    propose: Callable[[JevClient, AdbTransport, str], Awaitable]
+    propose: Callable[[JevClient, Device, str], Awaitable]
     execute: Callable[..., Awaitable]
     resume_arg: Callable[[object], object]
 
@@ -176,31 +176,31 @@ def _resolve_pending(proposal, *, verbose: bool) -> CommandVariant | None:
     return command
 
 
-async def run_toolkit(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True):
+async def run_toolkit(jev: JevClient, device: Device, goal: str, *, verbose: bool = True):
     """CLI convenience: one goal -> one atomic action, resolving needs_approval
     with a blocking prompt. Sequencing multi-step goals is the caller's job --
     run this (or the matching MCP tool) once per step."""
     with goal_scope(goal):
-        return await _run_toolkit_scoped(jev, transport, goal, verbose=verbose)
+        return await _run_toolkit_scoped(jev, device, goal, verbose=verbose)
 
 
-async def _run_toolkit_scoped(jev: JevClient, transport: AdbTransport, goal: str, *, verbose: bool = True):
+async def _run_toolkit_scoped(jev: JevClient, device: Device, goal: str, *, verbose: bool = True):
     if verbose:
         print(f"goal: {goal!r}\n")
-    pick = await pick_kind(jev, goal, transport, verbose=verbose)
+    pick = await pick_kind(jev, goal, device, verbose=verbose)
     if pick.kind is None:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(pick.reasons)}")
         return None
 
     if pick.kind == "open_app":
-        return await launch_app_for_goal(jev, transport, goal, verbose=verbose)
+        return await launch_app_for_goal(jev, device, goal, verbose=verbose)
     if pick.kind == "dumpsys":
-        return await run_dumpsys_query(jev, transport, goal, verbose=verbose)
+        return await run_dumpsys_query(jev, device, goal, verbose=verbose)
     if pick.kind == "scroll_to_find":
-        return await scroll_to_find(jev, transport, goal, verbose=verbose)
+        return await scroll_to_find(jev, device, goal, verbose=verbose)
     if pick.kind == "screenshot":
-        png = await take_screenshot(transport)
+        png = await take_screenshot(device)
         if verbose:
             print(f"screenshot: {len(png)} bytes (CLI doesn't display images -- pull it from the caller if needed)")
         return png
@@ -210,11 +210,11 @@ async def _run_toolkit_scoped(jev: JevClient, transport: AdbTransport, goal: str
         if verbose:
             print(f"(no dispatch wired for {pick.kind!r})")
         return None
-    proposal = await handler.propose(jev, transport, goal)
+    proposal = await handler.propose(jev, device, goal)
     command = _resolve_pending(proposal, verbose=verbose)
     if command is None:
         return None
-    return await handler.execute(jev, transport, goal, proposal, command, verify=True, verbose=verbose)
+    return await handler.execute(jev, device, goal, proposal, command, verify=True, verbose=verbose)
 
 
 # --- shared response builders ------------------------------------------------
@@ -327,7 +327,7 @@ def call_id_of(proposal) -> str | None:
 
 
 async def _run_ungated(
-    jev, transport, kind: str, goal: str, *, direction: str, max_attempts: int,
+    jev, device, kind: str, goal: str, *, direction: str, max_attempts: int,
     tier: int | None, recipe_id: str | None,
 ) -> dict:
     """The read-side kinds: no command gate (nothing mutates), but the same
@@ -335,38 +335,38 @@ async def _run_ungated(
     kind. open_app/scroll_to_find change the screen, so they carry a
     graph_edge; dumpsys/screenshot are read-only and carry none."""
     if kind == "open_app":
-        before = await outcomes.foreground_safe(transport)
-        result = await launch_app_for_goal(jev, transport, goal, verbose=False)
+        before = await outcomes.foreground_safe(device)
+        result = await launch_app_for_goal(jev, device, goal, verbose=False)
         response = response_for(kind, result, jev.engine_name)
         # The launch verification already proved the foreground package; ride
         # that device truth instead of paying a second dump when it ran.
-        after = result.package if result.launched and result.package else await outcomes.foreground_safe(transport)
+        after = result.package if result.launched and result.package else await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.emit_outcome(
-            transport=transport, call_id=result.call_id,
+            device=device, call_id=result.call_id,
             executed_command=f"monkey -p {result.package} 1" if result.package else None,
             verification=outcomes.verification_from_response(response), response=response,
             kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
         return response
     if kind == "dumpsys":
-        result = await run_dumpsys_query(jev, transport, goal, verbose=False)
+        result = await run_dumpsys_query(jev, device, goal, verbose=False)
         response = response_for(kind, result, jev.engine_name)
         outcomes.emit_outcome(
-            transport=transport, call_id=result.call_id,
+            device=device, call_id=result.call_id,
             executed_command=f"dumpsys {result.service}" if result.service else None,
             verification=outcomes.verification_from_response(response), response=response,
             kind=kind, tier=tier, recipe_id=recipe_id,
         )
         return response
     if kind == "scroll_to_find":
-        before = await outcomes.foreground_safe(transport)
-        result = await scroll_to_find(jev, transport, goal, direction=direction, max_attempts=max_attempts, verbose=False)
+        before = await outcomes.foreground_safe(device)
+        result = await scroll_to_find(jev, device, goal, direction=direction, max_attempts=max_attempts, verbose=False)
         response = response_for(kind, result, jev.engine_name)
-        after = await outcomes.foreground_safe(transport)
+        after = await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.emit_outcome(
-            transport=transport, call_id=result.call_id,
+            device=device, call_id=result.call_id,
             executed_command=result.executed[-1] if result.executed else None,
             verification=outcomes.verification_from_response(response), response=response,
             executed=list(result.executed), kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
@@ -375,7 +375,7 @@ async def _run_ungated(
     if kind == "screenshot":
         response = {"status": "ok"}
         outcomes.emit_outcome(
-            transport=transport, call_id=None, executed_command="screencap -p",
+            device=device, call_id=None, executed_command="screencap -p",
             verification=outcomes.verification_from_response(response), response=response,
             kind=kind, tier=tier, recipe_id=recipe_id,
         )
@@ -384,7 +384,7 @@ async def _run_ungated(
 
 
 async def run_kind(
-    jev, transport, kind: str, goal: str, *, verify: bool = True, auto_approve: bool = False,
+    jev, device, kind: str, goal: str, *, verify: bool = True, auto_approve: bool = False,
     direction: str = "down", max_attempts: int = 8,
     on_pending: Callable[..., Awaitable[dict] | dict] | None = None,
     tier: int | None = None, recipe_id: str | None = None,
@@ -402,30 +402,30 @@ async def run_kind(
     tier/recipe_id stamp planner-driven rows (None on ordinary rows)."""
     handler = KIND_TABLE.get(kind)
     if handler is None:
-        return await _run_ungated(jev, transport, kind, goal, direction=direction,
+        return await _run_ungated(jev, device, kind, goal, direction=direction,
                                   max_attempts=max_attempts, tier=tier, recipe_id=recipe_id)
     t0 = time.monotonic()
-    proposal = await handler.propose(jev, transport, goal)
+    proposal = await handler.propose(jev, device, goal)
     call_id = call_id_of(proposal)
     command = proposal.ready
     if command is None and proposal.pending is not None:
         if auto_approve:
             command = proposal.pending.command
         elif on_pending is not None:
-            outcomes.emit_outcome(transport=transport, call_id=call_id, verification=ESCALATED,
+            outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
                                   status="needs_approval", kind=kind, tier=tier, recipe_id=recipe_id)
             return await on_pending(goal, kind, handler.resume_arg(proposal),
                                     getattr(proposal, "confidence", 0.0), proposal.pending, verify)
     if command is None:
-        outcomes.emit_outcome(transport=transport, call_id=call_id, verification=ESCALATED,
+        outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
                               status="escalated", kind=kind, tier=tier, recipe_id=recipe_id)
         return {"status": "escalated", "reasons": list(proposal.reasons)}
     outcome, edge = await outcomes.graph_edge_around(
-        transport, lambda: handler.execute(jev, transport, goal, proposal, command, verify=verify, verbose=False),
+        device, lambda: handler.execute(jev, device, goal, proposal, command, verify=verify, verbose=False),
     )
     response = response_for(kind, outcome, jev.engine_name)
     outcomes.emit_outcome(
-        transport=transport, call_id=call_id, executed_command=command.command,
+        device=device, call_id=call_id, executed_command=command.command,
         verification=outcomes.verification_from_response(response), response=response,
         kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
     )
@@ -435,9 +435,9 @@ async def run_kind(
 
 
 async def main() -> None:
-    jev, transport = bootstrap()
+    jev, device = bootstrap()
     goal = sys.argv[1] if len(sys.argv) > 1 else "what is my battery level?"
-    await run_toolkit(jev, transport, goal)
+    await run_toolkit(jev, device, goal)
     print(f"\nusage: {jev.usage.snapshot()}")
 
 if __name__ == "__main__":

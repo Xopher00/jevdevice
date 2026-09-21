@@ -11,12 +11,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 from .budget import current_profile
+from .device import Device
 from .matching import fuzzy_narrow
-from .transport import AdbTransport
 
 
-async def dump_screen(transport: AdbTransport) -> str:
-    return await transport.dump_hierarchy()
+async def dump_screen(device: Device) -> str:
+    return await device.dump_hierarchy()
 
 
 def foreground_package(dump_xml: str) -> str | None:
@@ -32,12 +32,24 @@ def foreground_package(dump_xml: str) -> str | None:
 
 @dataclass
 class Element:
+    """One real on-screen element.
+
+    ACI-aligned observation keys, mapped onto what this parser already emits
+    (role/text/bbox/interactable -- no fields invented for devices we don't
+    have): `role` is the Android class noun (_CLASS_NOUNS: button, text field,
+    toggle...); `text` the node's real text; `bounds` (+ the x/y center)
+    is the device-reported bbox; `interactable` is not a stored field -- it is
+    WHICH parse_* family selected the node (parse_actionable_elements =
+    tappable, parse_long_clickable_elements = long-pressable,
+    parse_editable_elements = text-input), Android's own signal, never a
+    per-app guess."""
     x: int
     y: int
     bounds: str  # real device-reported bounds string, e.g. "[166,1173][415,1615]" -- passed to the gate as evidence
     text: str = ""  # the node's own real current text, e.g. an EditText's existing content
     description: str = ""  # natural-language phrasing of the same real fields, for fit questions
     short: str = ""  # short raw option label: the judge's Choice option text, ~1-3 tokens
+    role: str = "element"  # ACI role: the class noun already phrased inside `description`
 
 
 def _nearest_ancestor_bounds(node, parent_of: dict, attr: str) -> str | None:
@@ -66,11 +78,14 @@ _CLASS_NOUNS = (
 )
 
 
+def _class_noun(class_name: str) -> str:
+    return next((n for pattern, n in _CLASS_NOUNS if pattern in class_name), "element")
+
+
 def _natural_description(described: dict, attrs: dict) -> str:
     """A raw `text='X' resource-id='Y'` label in a fit question depresses the fit
     score versus the same facts phrased as a sentence."""
-    class_name = attrs.get("class", "")
-    noun = next((n for pattern, n in _CLASS_NOUNS if pattern in class_name), "element")
+    noun = _class_noun(attrs.get("class", ""))
     clauses = []
     if "content-desc" in described:
         clauses.append(f"labelled {described['content-desc']!r}")
@@ -143,7 +158,8 @@ def _parse_elements(dump_xml: str, is_match, ancestor_attr: str | None = None, l
             continue
         left, top, right, bottom = (int(n) for n in match.groups())
         description = _natural_description(described, attrs) if described else ""
-        elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""), description, short)
+        elements[label] = Element((left + right) // 2, (top + bottom) // 2, bounds, attrs.get("text", ""), description, short,
+                                  _class_noun(attrs.get("class", "")))
     return elements
 
 

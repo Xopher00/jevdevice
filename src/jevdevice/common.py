@@ -15,6 +15,7 @@ from .budget import (  # engine names live in budget.py
     BudgetProfile,
     current_profile,
 )
+from .device import AdbDevice
 from .jev import JevClient
 from .laya_backend import LayaClient
 from .matching import confidence_gate
@@ -63,13 +64,14 @@ DEVICE_ENV = "JEV_DEVICE"
 DEFAULT_DEVICE = "cpu"
 
 
-def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbTransport]:
-    """Judge engine + device transport. The workspace .env is loaded first (env
-    vars already set win), so TYPESAFE_AI_API and ANDROID_SERIAL work from any
-    entry point, not only a shell that sourced the file. TYPESAFE_AI_API is
-    required only for the jev engine -- the check lives in its branch, so
-    JEV_ENGINE=laya boots with no key set (that is what lets the MCP server run
-    fully on-box)."""
+def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbDevice]:
+    """Judge engine + device (the Device protocol's real Android
+    implementation, over the frozen AdbTransport). The workspace .env is loaded
+    first (env vars already set win), so TYPESAFE_AI_API and ANDROID_SERIAL
+    work from any entry point, not only a shell that sourced the file.
+    TYPESAFE_AI_API is required only for the jev engine -- the check lives in
+    its branch, so JEV_ENGINE=laya boots with no key set (that is what lets the
+    MCP server run fully on-box)."""
     load_env_file()
     serial = serial if serial is not None else os.environ.get("ANDROID_SERIAL")
     engine = (os.environ.get(ENGINE_ENV) or JEV_ENGINE_NAME).strip().lower()
@@ -88,7 +90,7 @@ def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbT
         client = LayaClient(device=os.environ.get(DEVICE_ENV, DEFAULT_DEVICE))
     if not serial:
         raise SystemExit("ANDROID_SERIAL not set -- run `adb devices` and export ANDROID_SERIAL=<serial>")
-    return client, AdbTransport(serial)
+    return client, AdbDevice(AdbTransport(serial))
 
 
 def gated(pick, escalate_prefix: str = "=== ESCALATED ===", *, profile: BudgetProfile | None = None) -> str | None:

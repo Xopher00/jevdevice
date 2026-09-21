@@ -53,10 +53,10 @@ class PlannerResult:
 
 
 async def run_kind_unattended(
-    jev, transport, kind: str, goal: str, *, tier: int | None = None, recipe_id: str | None = None,
+    jev, device, kind: str, goal: str, *, tier: int | None = None, recipe_id: str | None = None,
 ) -> StepResult:
     """One action through the shared dispatch, with no approval hook."""
-    response = await run_kind(jev, transport, kind, goal, tier=tier, recipe_id=recipe_id)
+    response = await run_kind(jev, device, kind, goal, tier=tier, recipe_id=recipe_id)
     return StepResult(kind, goal, outcomes.verification_from_response(response))
 
 
@@ -66,7 +66,7 @@ def _planner_row(status: str, *, tier: int, recipe_id: str | None = None, reason
 
 
 async def _replay_chain(
-    jev, transport, chain: list[tuple[str, str]], *,
+    jev, device, chain: list[tuple[str, str]], *,
     executor, tier: int, recipe_id: str | None, check_fit: bool = False,
 ) -> tuple[list[StepResult], StepResult | None]:
     """Run the chain in order. With check_fit, first ask a compiled
@@ -77,7 +77,7 @@ async def _replay_chain(
     for kind, step_goal in chain:
         if check_fit:
             truncation: dict = {}
-            screen = screen_summary(await dump_screen(transport), goal=step_goal, telemetry=truncation)
+            screen = screen_summary(await dump_screen(device), goal=step_goal, telemetry=truncation)
             answers = await jev.ask(
                 {"goal": step_goal, "screen": screen},
                 {"fits": question_sets.noul("planner.step_still_fits", step_kind=kind, step_goal=step_goal)},
@@ -86,14 +86,14 @@ async def _replay_chain(
             if answers["fits"].noul < floor:
                 results.append(StepResult(kind, step_goal, "skipped"))
                 continue
-        result = await executor(jev, transport, kind, step_goal, tier=tier, recipe_id=recipe_id)
+        result = await executor(jev, device, kind, step_goal, tier=tier, recipe_id=recipe_id)
         results.append(result)
         if result.status != "verified":
             return results, result
     return results, None
 
 
-async def _stepwise_loop(jev, transport, goal: str, *, executor) -> tuple[list[StepResult], bool]:
+async def _stepwise_loop(jev, device, goal: str, *, executor) -> tuple[list[StepResult], bool]:
     """Pick the next action over the closed vocabulary, run it gated, repeat
     until the done-check confirms the goal or a bound trips."""
     results: list[StepResult] = []
@@ -101,7 +101,7 @@ async def _stepwise_loop(jev, transport, goal: str, *, executor) -> tuple[list[S
     escalations = 0
     for _ in range(MAX_PLANNER_STEPS):
         truncation: dict = {}
-        screen_after = describe_screen(await dump_screen(transport), goal=goal,
+        screen_after = describe_screen(await dump_screen(device), goal=goal,
                                       limit=profile.screen_limit, telemetry=truncation)
         done = await jev.ask(
             {"goal": goal, "acted_on": "planner", "screen_after": screen_after},
@@ -110,14 +110,14 @@ async def _stepwise_loop(jev, transport, goal: str, *, executor) -> tuple[list[S
         )
         if done["satisfied"].noul >= profile.noul_floor:
             return results, True
-        pick = await pick_kind(jev, goal, transport, verbose=False)
+        pick = await pick_kind(jev, goal, device, verbose=False)
         if pick.kind is None:
             escalations += 1
             results.append(StepResult(None, goal, "escalated"))
             if escalations >= ESCALATION_LIMIT:
                 return results, False
             continue
-        result = await executor(jev, transport, pick.kind, goal, tier=2)
+        result = await executor(jev, device, pick.kind, goal, tier=2)
         results.append(result)
         escalations = escalations + 1 if result.status == "escalated" else 0
         if escalations >= ESCALATION_LIMIT:
@@ -126,7 +126,7 @@ async def _stepwise_loop(jev, transport, goal: str, *, executor) -> tuple[list[S
 
 
 async def resolve(
-    jev, transport, goal: str, *, executor=None, store: RecipeStore | None = None,
+    jev, device, goal: str, *, executor=None, store: RecipeStore | None = None,
 ) -> PlannerResult:
     """One goal through the tiers, cheapest first, with journaled
     fall-throughs. Giving up to a human is mark_human_escalation -- a
@@ -145,7 +145,7 @@ async def resolve(
         adapt_from = 0  # chain index tier 1 resumes from: tier 0's verified prefix is done
         if recipe is not None:
             chain = [(step.kind, step.goal) for step in recipe.steps]
-            steps, failed = await _replay_chain(jev, transport, chain, executor=executor, tier=0, recipe_id=recipe.recipe_id)
+            steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=0, recipe_id=recipe.recipe_id)
             all_steps.extend(steps)
             adapt_from = len(steps) - (1 if failed is not None else 0)
             if failed is None:
@@ -162,7 +162,7 @@ async def resolve(
         tier_path.append(1)
         if recipe is not None:
             chain = [(step.kind, step.goal) for step in recipe.steps[adapt_from:]]
-            steps, failed = await _replay_chain(jev, transport, chain, executor=executor, tier=1,
+            steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=1,
                                                 recipe_id=recipe.recipe_id, check_fit=True)
             all_steps.extend(steps)
             if failed is None:
@@ -175,7 +175,7 @@ async def resolve(
 
         # --- tier 2: stepwise selection over the closed vocabulary -----------
         tier_path.append(2)
-        steps, resolved = await _stepwise_loop(jev, transport, goal, executor=executor)
+        steps, resolved = await _stepwise_loop(jev, device, goal, executor=executor)
         all_steps.extend(steps)
         if resolved:
             _planner_row("planner_resolved", tier=2)
