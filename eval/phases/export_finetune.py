@@ -295,7 +295,7 @@ def spot_check(journal: DecisionJournal, examples: list[dict]) -> int:
     return ok
 
 
-def collect(journal: DecisionJournal) -> tuple[list[dict], dict[str, dict], Counter]:
+def collect(journal: DecisionJournal, exclude_goal_ids: frozenset[str] = frozenset()) -> tuple[list[dict], dict[str, dict], Counter]:
     """Primary, answered decision rows (+ outcome index), with exclusion counts."""
     outcomes: dict[str, dict] = {}
     rows: list[tuple[str, dict]] = []
@@ -318,7 +318,13 @@ def collect(journal: DecisionJournal) -> tuple[list[dict], dict[str, dict], Coun
         state = row.get("state") or {}
         goal = state.get("goal") if isinstance(state, dict) else None
         if goal and goal.casefold() in _heldout_casefold():
-            raise SystemExit(f"HELDOUT CONTAMINATION: row {row['call_id']} carries held-out goal {goal!r}")
+            # Fail-closed on contamination -- unless the operator explicitly
+            # excluded this goal id (stray pre-guard rows, card-recorded), the
+            # exact mechanism build_recipes.py uses. Never a silent default.
+            if row.get("goal_id") not in exclude_goal_ids:
+                raise SystemExit(f"HELDOUT CONTAMINATION: row {row['call_id']} carries held-out goal {goal!r}")
+            dropped["operator_excluded"] += 1
+            continue
         example = example_for(row, name, outcomes)
         if example is None:
             dropped["unjudgeable_or_excluded"] += 1
@@ -328,8 +334,26 @@ def collect(journal: DecisionJournal) -> tuple[list[dict], dict[str, dict], Coun
 
 
 def main() -> int:
-    journal = DecisionJournal(sys.argv[1] if len(sys.argv) > 1 else None)
-    examples, _outcomes, dropped = collect(journal)
+    args = sys.argv[1:]
+    # Operator-only exclusions (human sign-off, recorded in the card): a
+    # held-out goal id whose rows pre-date this contamination guard (a stray
+    # early run). Mirrors build_recipes.py's flag -- excluding is an operator
+    # decision made by passing the flag here, never a silent default.
+    exclude: set[str] = set()
+    journal_dir: str | None = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--exclude" and i + 1 < len(args):
+            exclude.add(args[i + 1])
+            i += 2
+        elif journal_dir is None and not args[i].startswith("--"):
+            journal_dir = args[i]
+            i += 1
+        else:
+            print(f"unknown argument {args[i]!r}", file=sys.stderr)
+            return 2
+    journal = DecisionJournal(journal_dir)
+    examples, _outcomes, dropped = collect(journal, exclude_goal_ids=frozenset(exclude))
 
     # dedupe identical (state, questions, supervision): calibration reruns repeat cases
     seen: dict[str, dict] = {}
@@ -380,6 +404,7 @@ def main() -> int:
         "provenance_counts": dict(sorted(provenance.items())),
         "goals": dict(sorted(Counter(str(e["goal"]) for e in examples).items())),
         "excluded_rows": dict(sorted(dropped.items())),
+        "operator_exclusions": sorted(exclude),
         "knobs": {"VAL_FRACTION": VAL_FRACTION, "SPLIT_SALT": SPLIT_SALT,
                   "MAX_EXAMPLES_PER_PHASE": MAX_EXAMPLES_PER_PHASE,
                   "note": "val here is dev-half data held back from the fine-tune; "
