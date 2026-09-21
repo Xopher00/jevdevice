@@ -216,12 +216,114 @@ async def _run_toolkit_scoped(jev: JevClient, transport: AdbTransport, goal: str
     return await handler.execute(jev, transport, goal, proposal, command, verify=True, verbose=verbose)
 
 
+# --- shared response builders ------------------------------------------------
+# The dict-response half of the dispatch (P7.5: moved out of mcp_server so the
+# MCP server and the planner render the same outcome identically instead of
+# drifting). Each builder takes (outcome, engine_name) -- only the gate-profile
+# comparisons actually need the engine; the rest ignore it.
+
+
+def _toggle_response(outcome, engine_name: str) -> dict:
+    return {
+        # Weakest-link status: a clean resolve with a low post-verify `satisfied` still isn't "ok".
+        "status": "ok" if not outcome.reasons and outcome.satisfied >= current_profile(engine_name).noul_floor else "unverified",
+        "exit_code": outcome.exit_code,
+        "check_service": outcome.check_service,
+        "satisfied": outcome.satisfied,
+        "reasons": list(outcome.reasons),
+    }
+
+
+def _tap_response(outcome, engine_name: str) -> dict:
+    return {
+        "status": "ok" if outcome.tapped and outcome.satisfied >= current_profile(engine_name).noul_floor else "unverified",
+        "element": outcome.element,
+        "satisfied": outcome.satisfied,
+        "reasons": list(outcome.reasons),
+    }
+
+
+def _launch_response(outcome, engine_name: str) -> dict:
+    return {
+        "status": "ok" if outcome.launched else "escalated",
+        "package": outcome.package,
+        "satisfied": outcome.satisfied,
+        "reasons": list(outcome.reasons),
+    }
+
+
+def _dumpsys_response(outcome, engine_name: str) -> dict:
+    # Weakest-link status: resolving the service but not the answer field is real, not "ok".
+    if outcome.parsed is None:
+        status = "escalated"
+    elif outcome.answer_key is None:
+        status = "unverified"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "service": outcome.service,
+        "answer": {outcome.answer_key: outcome.parsed[outcome.answer_key]} if outcome.answer_key else None,
+        "parsed": outcome.parsed,
+        "reasons": list(outcome.reasons),
+    }
+
+
+def _exit_code_response(outcome, engine_name: str) -> dict:
+    return {"status": "ok" if outcome == 0 else "unverified", "exit_code": outcome}
+
+
+def _scroll_response(outcome, engine_name: str) -> dict:
+    return {
+        "status": "ok" if outcome.found else "escalated",
+        "found": outcome.found,
+        "attempts": outcome.attempts,
+        "reasons": list(outcome.reasons),
+    }
+
+
+def _screenshot_response(outcome, engine_name: str) -> dict:
+    return {"status": "ok"}
+
+
+RESPONSE_FOR = {
+    "toggle_service": _toggle_response,
+    "tap": _tap_response,
+    "long_press": _tap_response,
+    "type_text": _tap_response,
+    "keyevent": _exit_code_response,
+    "swipe": _exit_code_response,
+    "set_dnd": _exit_code_response,
+    "open_app": _launch_response,
+    "dumpsys": _dumpsys_response,
+    "scroll_to_find": _scroll_response,
+    "screenshot": _screenshot_response,
+}
+
+
+def response_for(kind: str, outcome, engine_name: str) -> dict:
+    """One response dict per kind's outcome -- the single table both the MCP
+    server and the P7.5 planner render through."""
+    return RESPONSE_FOR[kind](outcome, engine_name)
+
+
+def call_id_of(proposal) -> str | None:
+    """The gate ask's call_id carried by any proposal shape, so executed actions
+    join their outcome row to the decision row that approved them."""
+    gate = getattr(proposal, "gate_result", None)
+    if gate is not None and gate.call_id:
+        return gate.call_id
+    pending = getattr(proposal, "pending", None)
+    if pending is not None and pending.gate_result is not None:
+        return pending.gate_result.call_id
+    return None
+
+
 async def main() -> None:
     jev, transport = bootstrap()
     goal = sys.argv[1] if len(sys.argv) > 1 else "what is my battery level?"
     await run_toolkit(jev, transport, goal)
     print(f"\nusage: {jev.usage.snapshot()}")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

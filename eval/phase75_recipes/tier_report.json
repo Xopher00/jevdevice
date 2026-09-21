@@ -1,0 +1,41 @@
+{
+  "goals_seen": 0,
+  "recipes_replayed": [],
+  "tiers": {
+    "0": {
+      "cold_goal": 0,
+      "human_escalation": 0,
+      "planner_fallthrough": 0,
+      "planner_resolved": 0,
+      "step_outcomes": {}
+    },
+    "1": {
+      "cold_goal": 0,
+      "human_escalation": 0,
+      "planner_fallthrough": 0,
+      "planner_resolved": 0,
+      "step_outcomes": {}
+    },
+    "2": {
+      "cold_goal": 0,
+      "human_escalation": 0,
+      "planner_fallthrough": 0,
+      "planner_resolved": 0,
+      "step_outcomes": {}
+    },
+    "3": {
+      "cold_goal": 0,
+      "human_escalation": 0,
+      "planner_fallthrough": 0,
+      "planner_resolved": 0,
+      "step_outcomes": {}
+    },
+    "4": {
+      "cold_goal": 0,
+      "human_escalation": 0,
+      "planner_fallthrough": 0,
+      "planner_resolved": 0,
+      "step_outcomes": {}
+    }
+  }
+}

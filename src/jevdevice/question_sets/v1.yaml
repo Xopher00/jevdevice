@@ -262,8 +262,8 @@ questions:
     type: choice
     phase: kind
     instructions: Which ONE action would this goal have you perform?
-    witness_n: 0
-    validated: false
+    witness_n: 1
+    validated: true
   kind.pick_screen:
     type: choice
     phase: kind
@@ -277,7 +277,7 @@ questions:
     type: noul
     phase: kind
     instructions: Given action_options, does any of them fit this goal?
-    witness_n: 57
+    witness_n: 58
     validated: true
   verify.satisfied_after_action:
     type: noul
@@ -286,3 +286,10 @@ questions:
       real text/resource-id/content-desc. Given screen_after, is the goal now achieved?
     witness_n: 1
     validated: true
+  planner.step_still_fits:
+    type: noul
+    phase: recall
+    instructions: The next recorded step for this goal would run {step_kind} for the sub-goal {step_goal}.
+      Given screen, does that step still apply to the goal?
+    witness_n: 0
+    validated: false

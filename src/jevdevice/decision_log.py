@@ -230,12 +230,17 @@ class DecisionJournal:
         device: str | None = None, decision: str | None = None,
         reasons=None, exit_code: int | None = None, satisfied: float | None = None,
         goal: str | None = None, goal_id: str | None = None,
-        executed=None,
+        executed=None, kind: str | None = None,
+        tier: int | None = None, recipe_id: str | None = None,
     ) -> None:
         """One row per execution-flow event (ran / needs approval / denied),
         joined to its decision row(s) by call_id. `executed` (additive, default
         None) lists EVERY command a multi-command action ran -- scroll_to_find's
-        swipes -- not just the last one, which `executed_command` carries."""
+        swipes -- not just the last one, which `executed_command` carries.
+        kind (additive, default None) names the ACTION_KINDS kind that ran --
+        P7.5 recipe chains key on it. tier/recipe_id (additive, default None)
+        are the P7.5 planner's decomposition tier and the recipe it replayed,
+        present only on planner-emitted rows."""
         if not self.enabled:
             return
         row = {
@@ -255,6 +260,9 @@ class DecisionJournal:
             "exit_code": exit_code,
             "satisfied": satisfied,
             "executed": list(executed) if executed else None,
+            "kind": kind,
+            "tier": tier,
+            "recipe_id": recipe_id,
         }
         try:
             self._append({key: self._blobify(value) for key, value in row.items()})
