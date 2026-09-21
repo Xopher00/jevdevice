@@ -1,6 +1,0 @@
-category                         command                                       default    tap_specific
-exact match                      input tap 166 1394                            0.61       0.53
-exact match, different element   input tap 914 873                             0.66       0.66
-mismatched: wrong coordinates    input tap 166 1836                            0.60       0.51
-mismatched: far off target       input tap 166 1394                            0.62       0.49
-does much more                   input tap 166 1394 && svc bluetooth disable   0.62       0.59

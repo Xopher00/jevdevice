@@ -1,5 +1,0 @@
-{"engine": "laya", "id": "ph01", "goal": "What is the battery level?", "goal_id": "aebc27d17af5", "wall_s": 35.14, "status": "escalated", "reasons": ["none of the 11 action kinds fit this goal"]}
-{"engine": "laya", "id": "ph03", "goal": "What is the phone's model name?", "goal_id": "2fb43014cf30", "wall_s": 7.05, "status": "escalated", "reasons": ["none of the 11 action kinds fit this goal"]}
-{"engine": "laya", "id": "ph05", "goal": "Which app is in the foreground right now?", "goal_id": "93c7839b7067", "wall_s": 461.09, "status": "escalated", "reasons": []}
-{"engine": "laya", "id": "ph07", "goal": "What is the screen resolution?", "goal_id": "9141c3b6e928", "wall_s": 10.08, "status": "escalated", "reasons": ["none of the 11 action kinds fit this goal"]}
-{"engine": "laya", "id": "ph09", "goal": "Which wifi network is the phone connected to?", "goal_id": "c29d42f903a4", "wall_s": 11.21, "status": "escalated", "reasons": ["none of the 11 action kinds fit this goal"]}
