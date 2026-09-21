@@ -2,7 +2,7 @@
 phrasing the golden path can ask.
 
 The phrasings are compiled artifacts under question_sets/v{N}.yaml: the
-journal is the golden set the compile step validates against
+journal is the labeled-example source the compile step validates against
 (eval/phases/compile_questions.py), and the runtime CONSUMES the frozen set
 -- it never invents phrasings on the golden path.
 
