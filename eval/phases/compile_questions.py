@@ -216,7 +216,7 @@ def main() -> int:
     if unmatched or problems:
         return 1
     stamp_witnesses(witnesses)
-    print("OK: artifact validated against the golden set and the module constants; witness counts stamped")
+    print("OK: artifact validated against the journal instances and the module constants; witness counts stamped")
     return 0
 
 

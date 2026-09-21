@@ -1,6 +1,6 @@
 """Export verified dev-half journal rows -> Laya fine-tune examples.
 
-The decision journal is the golden set. This exporter joins primary decision
+The decision journal is the labeled-example source. This exporter joins primary decision
 rows to their ground truth and emits one JSONL example per journal row:
 
     {"call_id", "goal_id", "goal", "phase", "engine", "journal_file", "ts",
