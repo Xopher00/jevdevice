@@ -15,7 +15,7 @@ Two load-bearing rules:
   outside the frozen set (e.g. a multi-step caller overriding fit wording)
   must be built via generated_noul()/generated_choice() and is journaled
   (decision row `generated=<source>`) so it can be promoted into the next
-  compiled set. No golden-path call site uses it (static guard test).
+  compiled set. No normal call site uses it (static guard test).
 
 The wire contract is untouched: GeneratedNoul's marker fields are
 `Field(exclude=True)`, so `model_dump()` produces byte-identical JSON --

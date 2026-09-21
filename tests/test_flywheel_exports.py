@@ -70,7 +70,7 @@ def test_plan_includes_pre_broken_and_start_state_variants() -> None:
         assert run["source_goal_id"] not in run["setup_ids"]
 
 
-# --- T1: trajectory extraction (report core) -----------------------------------
+# --- trajectory extraction (report core) ------------------------------------------
 
 def _journal_with_run(tmp_path: Path, goal: str, *, verified: bool) -> DecisionJournal:
     journal = DecisionJournal(tmp_path)

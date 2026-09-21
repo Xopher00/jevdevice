@@ -4,7 +4,7 @@ same guard discipline as the journal's phase labels.
 - The artifact loads, is versioned, and every id resolves; templates format.
 - The fused safe templates end with their plain safe template.
 - Missing slots fail closed (CompiledQuestionError), never silent generation.
-- A static guard bans instruction literals outside question_sets (the golden
+- A static guard bans instruction literals outside question_sets (the runtime
   path must consume the artifact, not inline prose).
 - The escape hatch works and is journaled: GeneratedNoul's marker fields are
   excluded from the wire dump, ask() journals generated=<source>, compiled
@@ -124,7 +124,7 @@ async def test_ask_journals_generated_source_and_compiled_stays_none(tmp_path, m
 
 
 def test_no_instruction_literals_outside_question_sets() -> None:
-    """Static guard: the golden path consumes the frozen set; instruction
+    """Static guard: the runtime consumes the frozen set; instruction
     prose lives only in the artifact (eval tooling and tests may inline)."""
     offenders = []
     for path in sorted(SRC.glob("*.py")):
