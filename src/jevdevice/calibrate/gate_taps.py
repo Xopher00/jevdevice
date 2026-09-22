@@ -43,8 +43,8 @@ async def main() -> None:
 
     print(f"{'category':<32} {'command':<45} {'default':<10} tap_specific")
     for (category, _, command, _), default, tap in zip(CASES, default_results, tap_results):
-        d = f"{default.noul_confidence:.2f}" if default.noul_confidence is not None else "n/a"
-        t = f"{tap.noul_confidence:.2f}" if tap.noul_confidence is not None else "n/a"
+        d = f"{default.confidence:.2f}" if default.confidence is not None else "n/a"
+        t = f"{tap.confidence:.2f}" if tap.confidence is not None else "n/a"
         print(f"{category:<32} {command:<45} {d:<10} {t}")
 
 

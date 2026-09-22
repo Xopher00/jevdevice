@@ -52,11 +52,13 @@ class GeneratedNoul(Noul):
     hatched_from: str = Field(default="", exclude=True)
 
 
-def generated_noul(source: str, instructions: str, criteria: dict[str, str] | None = None) -> GeneratedNoul:
+def generated_noul(source: str, instructions: str) -> GeneratedNoul:
     """The escape hatch: build a question OUTSIDE the frozen set. The decision
     row journals `generated=<source>`; generated questions are eligible for
-    promotion into the next compiled set. Never use on the normal runtime path."""
-    return GeneratedNoul(instructions=instructions, criteria=criteria, hatched_from=source)
+    promotion into the next compiled set. Never use on the normal runtime path.
+    (No criteria: the API's noul criteria is {true,false} outcome descriptions,
+    and nothing in this repo ever sent the generic map the old signature took.)"""
+    return GeneratedNoul(instructions=instructions, hatched_from=source)
 
 
 def generated_source(questions: dict) -> str | None:
@@ -118,14 +120,33 @@ class QuestionSet:
         phrasing into shared builders (narrowing's fit/pick parameters)."""
         return self._slots(question_id, slots)
 
-    def noul(self, question_id: str, criteria: dict | None = None, **slots: object) -> Noul:
-        return Noul(instructions=self.text(question_id, **slots), criteria=criteria)
+    def noul(self, question_id: str, **slots: object) -> Noul:
+        return Noul(instructions=self.text(question_id, **slots))
 
     def choice(self, question_id: str, criteria: dict[str, str | None], **slots: object) -> Choice:
         return Choice(instructions=self.text(question_id, **slots), criteria=criteria)
 
     def score(self, question_id: str, criteria: list[str], **slots: object) -> Score:
         return Score(instructions=self.text(question_id, **slots), criteria=criteria)
+
+    def ask(self, question_id: str, **slots: object) -> Question:
+        """The typesymbolic `vocab.Vocabulary` protocol surface: one frozen-worded
+        question by id, unknown id or missing slot failing closed exactly like
+        the native helpers. Criteria (a Choice's live-enumerated candidates, a
+        Score's ordered rubric) are runtime data and arrive via the `criteria`
+        slot -- the protocol has no criteria channel, so this is this domain's
+        documented convention; core's own flow (resolve_one) overwrites Choice
+        criteria from propose() anyway. The richer native API (text(),
+        fit_questions families, per-call-site choice()) stays: the protocol is
+        a subset surface a domain conforms to, not a replacement for it."""
+        criteria = slots.pop("criteria", None)
+        instructions = self.text(question_id, **slots)
+        entry_type = self.template(question_id)["type"]
+        if entry_type == "noul":
+            return Noul(instructions=instructions)
+        if entry_type == "choice":
+            return Choice(instructions=instructions, criteria=criteria or {})
+        return Score(instructions=instructions, criteria=criteria or [])
 
     def fit_questions(
         self, question_id: str, candidates, describe=lambda c: c, *, generated_source: str | None = None,
@@ -165,8 +186,8 @@ def text(question_id: str, **slots: object) -> str:
     return load().text(question_id, **slots)
 
 
-def noul(question_id: str, criteria: dict | None = None, **slots: object) -> Noul:
-    return load().noul(question_id, criteria=criteria, **slots)
+def noul(question_id: str, **slots: object) -> Noul:
+    return load().noul(question_id, **slots)
 
 
 def choice(question_id: str, criteria: dict[str, str | None], **slots: object) -> Choice:

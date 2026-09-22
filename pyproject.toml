@@ -7,6 +7,7 @@ dependencies = [
     "pydantic>=2.10,<3",
     "httpx>=0.28,<1",
     "mcp>=1.0,<2",
+    "typesymbolic>=0.1",
     "uiautomator2>=3.7.0",
     "adbutils[apk]>=2.12.0",
     "laya>=0.3.3",
@@ -26,6 +27,12 @@ dev = [
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+# Local path source: typesymbolic is consumed AS COMMITTED (7271aaf) --
+# jevdevice never carries uncommitted expectations about it. Core changes it
+# needs go to its agent via TSYM-MIGRATION-REPORT.md, never into the repo.
+[tool.uv.sources]
+typesymbolic = { path = "../typesymbolic" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jevdevice"]

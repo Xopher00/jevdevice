@@ -12,6 +12,20 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
 
+# The gate's verdict mechanics come from typesymbolic as committed: core's
+# GateVerdict/GateResult are THE gate types (no local copies), and every
+# threshold comparison goes through core's one shared primitive (circuit.
+# threshold_decision). The domain-owned remainder here is what core should
+# not know: the argv read-only/deny classification, the calibrated reason
+# strings (read_only/deny_listed/jev_confirmed/jev_uncertain -- journal-
+# continuity vocabulary), and the ask orchestration around the threshold
+# call. The confidence handed to the threshold is the RAW noul probability
+# (what the 0.8 gate threshold was calibrated against), NOT a synthesized
+# noul confidence -- core's Answer shape derives |p-0.5|*2 for nouls, which
+# would silently reinterpret every calibrated threshold (see report H2).
+from typesymbolic.circuit import threshold_decision
+from typesymbolic.gate import GateResult, GateVerdict
+
 from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
 from jevdevice.jev import Choice, JevClient, Noul
@@ -108,24 +122,6 @@ class CommandVariant:
     rationale: str
 
 
-class GateVerdict:
-    APPROVED = "approved"
-    DENIED = "denied"
-    NEEDS_APPROVAL = "needs_approval"
-
-
-@dataclass
-class GateResult:
-    verdict: str
-    reason: str
-    noul_confidence: float | None = None
-    # Journal linkage: the ask() call whose answer produced this verdict, so the
-    # approval/execution flow (mcp_server PendingAction) can join its outcome row
-    # to the gate's decision row. None for verdicts settled without an ask
-    # (read_only/deny_listed fast paths).
-    call_id: str | None = None
-
-
 @dataclass
 class Pending:
     """A gated command awaiting a decision -- carries everything needed to finish
@@ -138,18 +134,18 @@ class Pending:
 
 
 def resolve_gate(gate_result: GateResult, command: CommandVariant, chosen_label: str) -> tuple[CommandVariant | None, Pending | None, tuple[str, ...]]:
-    """The APPROVED/NEEDS_APPROVAL/DENIED -> (ready, pending, reasons) mapping
+    """The ACT/NEEDS_APPROVAL/DENY -> (ready, pending, reasons) mapping
     every propose_* function needs -- one place instead of five copies."""
-    if gate_result.verdict == GateVerdict.APPROVED:
+    if gate_result.verdict == GateVerdict.ACT:
         return command, None, ()
     if gate_result.verdict == GateVerdict.NEEDS_APPROVAL:
         return None, Pending(command, chosen_label, gate_result), ()
     return None, None, (gate_result.reason,)
 
 
-def confirm_with_human(command: CommandVariant, chosen_label: str, noul_confidence: float | None) -> bool:
+def confirm_with_human(command: CommandVariant, chosen_label: str, confidence: float | None) -> bool:
     """needs_approval means defer to a person, not silently drop the action."""
-    conf = f"{noul_confidence:.2f}" if noul_confidence is not None else "n/a"
+    conf = f"{confidence:.2f}" if confidence is not None else "n/a"
     print(f"\nApprove this command? (Jev confidence {conf})\n  action: {chosen_label}\n  command: {command.command}")
     try:
         return input("  [y/N] ").strip().lower() == "y"
@@ -170,9 +166,9 @@ async def gate_command(
     `threshold` defaults to the answering engine's profile knob (budget.py):
     each engine's noul scale is its own, so the approval floor travels with it."""
     if is_read_only(command.command):
-        return GateResult(verdict=GateVerdict.APPROVED, reason="read_only")
+        return GateResult(GateVerdict.ACT, "read_only")
     if is_denied(command.command):
-        return GateResult(verdict=GateVerdict.DENIED, reason="deny_listed")
+        return GateResult(GateVerdict.DENY, "deny_listed")
     profile = current_profile(jev.engine_name)
     threshold = profile.gate_threshold if threshold is None else threshold
 
@@ -194,14 +190,20 @@ def finalize_gate(
     """Applies the same deny-list + threshold rule gate_command does, but takes an
     already-computed confidence -- for callers that got it speculatively (e.g. asked
     alongside a narrowing pick in one batched request) instead of via their own ask.
-    Callers with a client pass the answering engine's profile.gate_threshold
-    (gate_command resolves it that way); the bare default stays the jev-era 0.8.
-    `call_id` joins the verdict to that shared ask's decision row (see _fused_pick_and_gate)."""
+    The threshold comparison is core's shared primitive (circuit.threshold_decision);
+    the verdict is core's, the reason strings are this repo's own (journal
+    continuity). Callers with a client pass the answering engine's
+    profile.gate_threshold (gate_command resolves it that way); the bare default
+    stays the jev-era 0.8. `call_id` joins the verdict to that shared ask's
+    decision row (see _fused_pick_and_gate). A missing confidence fails CLOSED
+    (needs_approval) -- deliberately more conservative than core's mutation_gate,
+    which fails open on None (see report H3)."""
     if is_denied(command.command):
-        return GateResult(verdict=GateVerdict.DENIED, reason="deny_listed")
-    if confidence >= threshold:
-        return GateResult(verdict=GateVerdict.APPROVED, reason="jev_confirmed", noul_confidence=confidence, call_id=call_id)
-    return GateResult(verdict=GateVerdict.NEEDS_APPROVAL, reason="jev_uncertain", noul_confidence=confidence, call_id=call_id)
+        return GateResult(GateVerdict.DENY, "deny_listed", confidence, call_id)
+    passes, _ = threshold_decision(confidence, threshold)
+    if passes is True:
+        return GateResult(GateVerdict.ACT, "jev_confirmed", confidence, call_id)
+    return GateResult(GateVerdict.NEEDS_APPROVAL, "jev_uncertain", confidence, call_id)
 
 
 @dataclass
@@ -251,6 +253,6 @@ async def propose_from_closed_set(
     chosen_label = label_for(pick_answer.choice)
     gate_result = await gate_command(jev, command, chosen_label=chosen_label, instructions=gate_instructions)
     if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
+        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
     return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons, gate_result=gate_result)

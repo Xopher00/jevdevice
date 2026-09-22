@@ -356,7 +356,7 @@ async def test_tier4_human_escalation_is_explicit(journal_recorder) -> None:
 def _fake_handler(*, ready: CommandVariant | None, call_id: str | None = "cid-gate"):
     class FakeHandler:
         async def propose(self, jev, transport, goal):
-            gate = GateResult(verdict="needs_approval", reason="r", noul_confidence=0.9, call_id=call_id) if call_id else None
+            gate = GateResult(verdict="needs_approval", reason="r", confidence=0.9, call_id=call_id) if call_id else None
             return SimpleNamespace(ready=ready, pending=None, reasons=(), gate_result=gate)
 
         async def execute(self, jev, transport, goal, proposal, command, **kw):

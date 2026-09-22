@@ -23,6 +23,24 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
+# The typed question primitives come from typesymbolic -- the shared judge
+# boundary -- instead of being defined here a second time. Noul and Score are
+# exact matches and are used as-is. One LOCAL subclass widens a single field:
+# Choice.criteria, to dict[str, str | None]. The real wire accepts null
+# criteria values ("None for undescribed labels", per typesafe_sdk.Choice),
+# and this repo enumerates live candidates whose option ids carry no
+# per-option description. Core models criteria as dict[str, str]; the
+# widening is spec'd for upstream in TSYM-MIGRATION-REPORT.md. This is an
+# extension, not a shim: nothing converts at a boundary, this IS the type
+# every call site uses, and model_dump(exclude_none=True) produces the same
+# bytes the old local models did -- the FROZEN wire body is untouched
+# (tests/test_wire_contract.py pins the exact dicts). The old local
+# Noul.criteria field dies rather than migrating: nothing ever sent it, and
+# the API's real noul criteria shape is {true, false} (typesafe_sdk.
+# NoulCriteria), not a generic map.
+from typesymbolic.question import Choice as _CoreChoice
+from typesymbolic.question import Noul, Question, Score
+
 from jevdevice.journal import decision_log
 from jevdevice.judge import shadow
 
@@ -34,25 +52,15 @@ RETRY_STATUS_CODES = {429, 529}
 MAX_RETRIES = 3
 
 
-class Noul(BaseModel):
-    type: Literal["noul"] = "noul"
-    instructions: str
-    criteria: dict[str, str] | None = None
+class Choice(_CoreChoice):
+    """Core's Choice with criteria widened to the wire's real shape: a value
+    of None marks an undescribed label (a live-enumerated candidate id with
+    no per-option text), which the API accepts."""
 
-
-class Choice(BaseModel):
-    type: Literal["choice"] = "choice"
-    instructions: str
     criteria: dict[str, str | None]
 
 
-class Score(BaseModel):
-    type: Literal["score"] = "score"
-    instructions: str
-    criteria: list[str]
-
-
-Question = Noul | Choice | Score
+__all__ = ["Choice", "JevClient", "JevError", "Noul", "Question", "Score"]
 
 
 class NoulAnswer(BaseModel):

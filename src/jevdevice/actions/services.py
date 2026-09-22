@@ -127,7 +127,7 @@ async def propose_toggle(jev: JevClient, device: Device, goal: str, *, verbose: 
         print(f"--- step 3: gate (deny-list + Jev Noul) before executing: {command.command!r} ---")
     gate_result = await gate_command(jev, command, chosen_label=chosen_label)
     if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})\n")
+        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})\n")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
     return ToggleProposal(service, enabled, ready, pending, reasons, gate_result=gate_result)
 

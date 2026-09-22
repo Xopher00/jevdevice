@@ -18,9 +18,11 @@ import re
 from pathlib import Path
 
 import pytest
+import typesymbolic.vocab
 
 from jevdevice import question_sets
 from jevdevice.jev import Noul
+from jevdevice.judge.gate import CommandVariant, finalize_gate
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "jevdevice"
 INSTRUCTION_LITERAL = re.compile(r"(?:Noul|Choice|Score)\(\s*instructions\s*=\s*['\"(]|instructions\s*=\s*['\"]")
@@ -144,3 +146,45 @@ def test_env_knob_selects_version(monkeypatch) -> None:
         question_sets.load("v999")  # unknown artifact -> fail-closed, not a fallback
     question_sets._cache.clear()
     assert json.dumps(question_sets.load("v1").template("recall.any")) is not None
+
+
+# --- typesymbolic Vocabulary protocol conformance -------------------------
+
+def test_question_set_conforms_to_the_core_vocabulary_protocol() -> None:
+    """QuestionSet is a typesymbolic vocab.Vocabulary: `version` + `ask(qid,
+    **slots)`, fail-closed exactly like the native helpers."""
+    vocab: typesymbolic.vocab.Vocabulary = question_sets.load()  # structural conformance, typed
+    assert vocab.version == "v1"
+
+    q = vocab.ask("recall.any")
+    assert isinstance(q, question_sets.Noul) and q.instructions
+
+    picked = vocab.ask("tap.pick", criteria={"elem one": None, "elem two": "described"})
+    assert isinstance(picked, question_sets.Choice)
+    assert picked.criteria == {"elem one": None, "elem two": "described"}
+
+
+def test_vocabulary_ask_fails_closed_like_the_native_helpers() -> None:
+    vocab = question_sets.load()
+    with pytest.raises(question_sets.CompiledQuestionError):
+        vocab.ask("no.such.question_id")  # unknown id -> fail-closed, not improvised
+    with pytest.raises(question_sets.CompiledQuestionError):
+        vocab.ask("planner.step_still_fits")  # missing required slots -> fail-closed
+
+
+def test_core_gate_types_are_the_gate_types() -> None:
+    """The gate verdicts/results are typesymbolic's, with this repo's reason
+    strings and the raw-noul (not synthesized) confidence."""
+    from typesymbolic.gate import GateResult as CoreGateResult
+    from typesymbolic.gate import GateVerdict as CoreGateVerdict
+
+    command = CommandVariant("svc bluetooth disable", "matches the goal")
+    approved = finalize_gate(command, confidence=0.9, threshold=0.8)
+    assert isinstance(approved, CoreGateResult)
+    assert approved.verdict == CoreGateVerdict.ACT and approved.reason == "jev_confirmed"
+    below = finalize_gate(command, confidence=0.5, threshold=0.8)
+    assert below.verdict == CoreGateVerdict.NEEDS_APPROVAL and below.confidence == 0.5
+    denied = finalize_gate(CommandVariant("rm -rf /sdcard", "nope"), confidence=0.99)
+    assert denied.verdict == CoreGateVerdict.DENY and denied.reason == "deny_listed"
+    missing = finalize_gate(command, confidence=None)  # type: ignore[arg-type]
+    assert missing.verdict == CoreGateVerdict.NEEDS_APPROVAL  # fails closed, unlike core's mutation_gate

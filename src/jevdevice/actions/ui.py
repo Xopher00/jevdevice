@@ -237,7 +237,7 @@ async def _propose_gesture(
             instructions=question_sets.text(safe_question_id),
         )
     if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
+        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
     return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons, gate_result=gate_result)
 
@@ -567,7 +567,7 @@ async def propose_type(
         instructions=TYPE_SAFE_INSTRUCTIONS,
     )
     if verbose:
-        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.noul_confidence})")
+        print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
     return TypeProposal(field_verdict.choice, value, field_verdict.confidence, ready, pending, reasons, gate_result=gate_result)
 

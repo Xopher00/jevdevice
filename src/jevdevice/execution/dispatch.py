@@ -171,7 +171,7 @@ def _resolve_pending(proposal, *, verbose: bool) -> CommandVariant | None:
         return proposal.ready
     command = None
     if proposal.pending is not None:
-        approved = confirm_with_human(proposal.pending.command, proposal.pending.chosen_label, proposal.pending.gate_result.noul_confidence)
+        approved = confirm_with_human(proposal.pending.command, proposal.pending.chosen_label, proposal.pending.gate_result.confidence)
         command = proposal.pending.command if approved else None
     if command is None and verbose:
         print(f"=== NOT EXECUTED === {'; '.join(proposal.reasons) or 'gate did not approve'}")

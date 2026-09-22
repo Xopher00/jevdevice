@@ -57,7 +57,7 @@ def _pending_response(action_id: str, action: PendingAction) -> dict:
         "thread_id": action_id,
         "command": action.pending.command.command,
         "rationale": action.pending.command.rationale,
-        "confidence": action.pending.gate_result.noul_confidence,
+        "confidence": action.pending.gate_result.confidence,
     }
 
 

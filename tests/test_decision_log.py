@@ -267,7 +267,7 @@ def test_pending_action_carries_the_gate_call_id() -> None:
     from jevdevice.judge.gate import GateVerdict, Pending
 
     gate_result = GateResult(verdict=GateVerdict.NEEDS_APPROVAL, reason="jev_uncertain",
-                             noul_confidence=0.5, call_id="cid-gate")
+                             confidence=0.5, call_id="cid-gate")
     pending = Pending(command=CommandVariant("input tap 5 700", "tap per the goal"),
                       chosen_label="tap '7'", gate_result=gate_result)
     mcp_server._store_pending("press 7", "tap", "element", 0.9, pending)

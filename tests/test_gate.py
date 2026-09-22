@@ -63,12 +63,12 @@ def test_chained_command_not_read_only_unless_every_invocation_is() -> None:
 
 async def test_denied_command_is_denied_without_ever_calling_jev() -> None:
     result = await gate_command(None, CommandVariant("rm -rf /sdcard", "unrelated"), chosen_label="check battery level")
-    assert result.verdict == GateVerdict.DENIED
+    assert result.verdict == GateVerdict.DENY
 
 
 async def test_read_only_command_is_approved_without_ever_calling_jev() -> None:
     result = await gate_command(None, CommandVariant("dumpsys battery", "read battery"), chosen_label="read the battery level")
-    assert result.verdict == GateVerdict.APPROVED
+    assert result.verdict == GateVerdict.ACT
     assert result.reason == "read_only"
 
 

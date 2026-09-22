@@ -33,7 +33,7 @@ async def main() -> None:
 
     print(f"{'category':<32} {'action':<22} {'command':<45} verdict       noul")
     for (category, action, command, _), result in zip(CASES, results):
-        noul = f"{result.noul_confidence:.2f}" if result.noul_confidence is not None else "n/a (deny-listed)"
+        noul = f"{result.confidence:.2f}" if result.confidence is not None else "n/a (deny-listed)"
         print(f"{category:<32} {action:<22} {command:<45} {result.verdict:<13} {noul}")
 
 
