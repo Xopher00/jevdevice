@@ -5,9 +5,9 @@ and nothing else. Ported off the removed `JevClient` onto the current
 `httpx2.MockTransport`, as test_journal_behaviour.py does) with a `.shadow`/
 `.shadow_tasks` pair hung on it by plain attribute assignment (attach()'s own
 contract), and `jev.ask()` itself schedules/drains -- no client class remains.
-Both the primary and its shadow now write through the same
-`decision_log.get_journal()` singleton (there is no more per-client journal),
-so every test monkeypatches it once and reads both rows off it.
+The primary and its shadow both write through the shared
+`decision_log.get_journal()` singleton (no per-client journal), so every
+test monkeypatches it once and reads both rows off it.
 
 Old -> new mapping: `JevClient("test-key", journal=...)` -> `JevEngine(api_key=
 "test-key", transport=httpx2.MockTransport(handler))`, journal monkeypatched
@@ -16,7 +16,7 @@ onto `decision_log._default_journal` (like every other ported ask() test);
 questions, phase=...)`; `client.shadow`/`client.shadow_tasks` -> unchanged
 attribute names, set directly instead of via a JevClient constructor;
 `client.aclose()` -> `shadow_mode.drain(engine)`; the old flat `row["shadow_of"]`
--> `row["scope"]["shadow_of"]` (shadow_of now rides `scope`, per jev.ask()).
+-> `row["scope"]["shadow_of"]` (shadow_of rides `scope`, per jev.ask()).
 Every original assertion is kept."""
 
 from __future__ import annotations

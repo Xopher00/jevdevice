@@ -80,10 +80,14 @@ def record_action(
     executed: list | None = None, recovery_command: str | None = None,
     graph_edge: dict | None = None, decision: str | None = None, status: str | None = None,
     tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None,
+    kind: str | None = None,
 ) -> Verdict | None:
-    """Journal one Act (`record_outcome`, `key` = the kind/element pick key) and,
-    given a device `response`, the Verdict it implies (`record_verdict`), both
-    on `call_id`. `executed` -> one ActStep per command. Returns the Verdict."""
+    """Journal one Act (`record_outcome`, `key` = the decision's own answer key
+    the verdict speaks to -- "pick"/"service", never the kind name or the
+    `safe` gate noul) and, given a device `response`, the Verdict it implies
+    (`record_verdict`), both on `call_id`. `kind` (e.g. "tap") rides `extra`,
+    descriptive only -- it never joins a decision row. `executed` -> one
+    ActStep per command. Returns the Verdict."""
     satisfied = exit_code = None
     if response is not None:
         status = response.get("status", status)
@@ -98,7 +102,7 @@ def record_action(
     )
     extra = {k: v for k, v in {
         "device": getattr(device, "name", None) if device is not None else None,
-        "goal": goal, "goal_id": goal_id, "executed_command": executed_command,
+        "goal": goal, "goal_id": goal_id, "executed_command": executed_command, "kind": kind,
         "recovery_command": recovery_command, "graph_edge": graph_edge, "decision": decision,
         "status": status, "tier": tier, "recipe_id": recipe_id,
         "satisfied": satisfied, "exit_code": exit_code,

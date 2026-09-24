@@ -104,6 +104,7 @@ class TapProposal:
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
+    pick_call_id: str | None = None  # the "pick" answer's own row -- device verdicts label this
 
 
 async def _fused_pick_and_gate(
@@ -236,7 +237,11 @@ async def _propose_gesture(
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons, gate_result=gate_result)
+    # Fused path: pick+gate share one call_id (gate_result.call_id has it, verdict.call_id is
+    # unset). Fallback path: verdict.call_id is the pick's own, separate from the later gate ask.
+    pick_call_id = verdict.call_id or gate_result.call_id
+    return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons,
+                       gate_result=gate_result, pick_call_id=pick_call_id)
 
 
 async def propose_tap(
@@ -434,6 +439,7 @@ class TypeProposal:
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
+    pick_call_id: str | None = None  # the "pick" answer's own row -- device verdicts label this
 
 
 def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
@@ -471,7 +477,7 @@ async def _pick_value(jev: JudgeEngine, goal: str, spans: list[str]) -> dict | N
 async def _fused_field_and_value(
     jev: JudgeEngine, goal: str, options: dict[str, Element], spans: list[str], fit_instructions: str,
     *, fit_generated_source: str | None = None,
-) -> tuple[NarrowVerdict, dict | None]:
+) -> tuple[NarrowVerdict, dict | None, str | None]:
     """Batches field-narrow with value-pick into one real request on a cache miss -- they're
     independent facts that previously cost two separate round trips (asyncio.gather only
     overlaps wall-clock time, it doesn't merge the payloads). `options` is the judge's
@@ -490,18 +496,18 @@ async def _fused_field_and_value(
         state["candidate_values"] = spans
         questions["value"] = question_sets.choice("type_value.pick", choice_criteria({s: None for s in spans}, profile))
         questions["any_fit_value"] = question_sets.noul("type_value.any_fit")
-    _, answers = await ask(jev, state, questions, phase="fill")
+    call_id, answers = await ask(jev, state, questions, phase="fill")
     pick = answers["pick"]
     fits = extract_fits(answers, options)
     if is_abstain(pick.choice):
-        return _abstain_verdict(options, fits, pick.confidence), None
+        return _abstain_verdict(options, fits, pick.confidence), None, call_id
     # A field's label embeds its live text, so it reads as a new candidate once typed into --
     # same fix as run_dumpsys_query's answer-field pick: min_fit is the real bar on a small pool.
     loose = {"min_confidence": 0.0, "min_margin": 0.0} if len(options) <= 3 else {
         "min_fit": profile.min_fit, "min_confidence": profile.min_confidence, "min_margin": profile.min_margin}
     field_verdict = decide(pick.choice, pick.probabilities, pick.confidence, fits, list(options), **loose)
     value_answers = {"value": answers["value"], "any_fit": answers["any_fit_value"]} if spans else None
-    return field_verdict, value_answers
+    return field_verdict, value_answers, call_id
 
 
 async def propose_type(
@@ -527,9 +533,9 @@ async def propose_type(
         if verbose:
             print(f"cache hit: {cached!r} still on screen, skipping Jev narrowing")
         field_verdict = NarrowVerdict(cached, 1.0, 1.0, 1.0, [cached])
-        answers = await _pick_value(jev, goal, spans)
+        answers, pick_call_id = await _pick_value(jev, goal, spans), None
     else:
-        field_verdict, answers = await _fused_field_and_value(
+        field_verdict, answers, pick_call_id = await _fused_field_and_value(
             jev, goal, options, spans,
             fit_instructions or question_sets.text("type_field.fit"),
             fit_generated_source=None if fit_instructions is None else "propose_type.fit_instructions_override",
@@ -565,12 +571,13 @@ async def propose_type(
     gate_result = await gate_command(
         jev, command, chosen_label=chosen_label,
         evidence={"target_element": field_verdict.choice, "target_bounds": target.bounds, "typed_value": value},
-        instructions=TYPE_SAFE_INSTRUCTIONS,
+        qid="type.safe",
     )
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return TypeProposal(field_verdict.choice, value, field_verdict.confidence, ready, pending, reasons, gate_result=gate_result)
+    return TypeProposal(field_verdict.choice, value, field_verdict.confidence, ready, pending, reasons,
+                        gate_result=gate_result, pick_call_id=pick_call_id)
 
 
 async def execute_type(

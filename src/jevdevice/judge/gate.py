@@ -219,6 +219,7 @@ class ClosedSetProposal:
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
+    pick_call_id: str | None = None  # the "pick" answer's own row -- device verdicts label this, not the gate
 
 
 async def propose_from_closed_set(
@@ -236,12 +237,14 @@ async def propose_from_closed_set(
     asks for calibration; omitted, the *_instructions text is asked untagged (unchanged)."""
     profile = current_profile(jev.name)
     pick_criteria = choice_criteria(options, profile)
-    _, answers = await ask(
+    call_id, answers = await ask(
         jev,
         {"goal": goal, options_key: options},
         {
-            "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=pick_instructions, criteria=pick_criteria),
-            "any_fit": question_sets.noul(any_fit_qid) if any_fit_qid else Noul(instructions=any_fit_instructions),
+            "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid
+                    else Choice(instructions=pick_instructions, criteria=pick_criteria),
+            "any_fit": question_sets.noul(any_fit_qid) if any_fit_qid
+                       else Noul(instructions=any_fit_instructions),
         },
         phase="fill",
     )
@@ -257,9 +260,12 @@ async def propose_from_closed_set(
         return ClosedSetProposal(None, pick_answer.confidence, reasons=(reason,))
     command = command_for(pick_answer.choice)
     chosen_label = label_for(pick_answer.choice)
-    gate_result = await gate_command(jev, command, chosen_label=chosen_label,
-                                     instructions=None if gate_qid else gate_instructions, qid=gate_qid or "gate.safe.default")
+    gate_result = await gate_command(
+        jev, command, chosen_label=chosen_label,
+        instructions=None if gate_qid else gate_instructions, qid=gate_qid or "gate.safe.default",
+    )
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons, gate_result=gate_result)
+    return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons,
+                             gate_result=gate_result, pick_call_id=call_id)

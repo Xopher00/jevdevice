@@ -140,17 +140,17 @@ async def test_call_id_is_generated_once_per_ask_when_not_supplied(monkeypatch) 
 
 
 async def test_primary_ask_then_device_verdict_labels_the_pooled_unit(tmp_path: Path, monkeypatch) -> None:
-    """End to end (2e): a compiled-question primary ask carries a QuestionRef
+    """End to end: a compiled-question primary ask carries a QuestionRef
     (jev.py's `_refs_for`), and a device-verified outcome on its answer key
     (journal/outcomes.record_action, the "tests = pick key" verdict) joins
-    into the live LabelIndex -- the loop 2d found open, closed."""
+    into the live LabelIndex."""
     from jevdevice import question_sets
     from jevdevice.journal import outcomes
 
     journal = Journal(root=tmp_path, background_writes=False)
     monkeypatch.setattr(decision_log, "_default_journal", journal)
     engine = _engine(lambda request: _ok_response())
-    question = question_sets.load().noul("tap.safe")  # ".safe" suffix -> 2d's pooled "gate" unit
+    question = question_sets.load().noul("tap.safe")  # ".safe" suffix -> the pooled "gate" unit
     call_id, _ = await ask(engine, {"goal": "g"}, {"q1": question}, phase="gate")
 
     outcomes.record_action(call_id=call_id, key="q1", response={"status": "ok"})
@@ -158,33 +158,55 @@ async def test_primary_ask_then_device_verdict_labels_the_pooled_unit(tmp_path: 
     assert journal.labeled_pairs("gate", "noul_p", engine="jev", any_revision=True) == [(0.9, True)]
 
 
-async def test_element_pick_via_narrowing_then_verdict_labels_its_unit(tmp_path: Path, monkeypatch) -> None:
-    """A raw pick built by a shared narrowing helper (judge/narrowing.py's
-    `_pick_and_decide`) tags only when the caller threads `pick_qid` through --
-    proved here on narrow_and_pick's own contract."""
-    from typesymbolic.judge import AskResult
-    from typesymbolic.question import Answer
+async def test_dispatch_run_kind_labels_the_pick_not_the_kind_or_gate(tmp_path: Path, monkeypatch) -> None:
+    """Production-path guard: dispatch.run_kind's final
+    record_action must key a verified device outcome by the pick's OWN
+    answer key/call_id (execution/dispatch.py's PICK_KEY_FOR + pick_call_id_of),
+    never the kind name and never the gate's call_id -- a proposal here
+    carries a gate call_id that is deliberately a DIFFERENT, unlabeled row."""
+    from types import SimpleNamespace
 
-    from jevdevice.journal import outcomes
-    from jevdevice.judge.narrowing import narrow_and_pick
+    from typesymbolic.gate import GateVerdict
 
-    class FakeJudge:
-        name = "jev"
-
-        async def ask_all(self, state, questions) -> AskResult:
-            return AskResult(answers={
-                "pick": Answer.from_choice(qid="", choice="a", probabilities={"a": 0.9}, confidence=0.9),
-                "fit_0": Answer(qid="fit_0", type="noul", noul=0.9),
-            })
+    from jevdevice import question_sets
+    from jevdevice.execution import dispatch
+    from jevdevice.judge.gate import CommandVariant, GateResult
 
     journal = Journal(root=tmp_path, background_writes=False)
     monkeypatch.setattr(decision_log, "_default_journal", journal)
-    verdict = await narrow_and_pick(FakeJudge(), "goal", ["a"], instructions="pick?",
-                                    fit_instructions="fit {candidate}?", pick_qid="tap.pick")
 
-    outcomes.record_action(call_id=verdict.call_id, key="pick", response={"status": "ok"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={
+            "model": "jev-1.13.0", "usage": {"input_tokens": 1, "output_tokens": 1},
+            "answers": {"pick": {"type": "choice", "choice": "a", "confidence": 0.9, "probabilities": {"a": 0.9}}},
+        })
 
-    assert journal.labeled_pairs("tap.pick", "confidence", engine="jev", any_revision=True) == [(0.9, True)]
+    engine = _engine(handler)
+    question = question_sets.load().choice("swipe.pick", criteria={"a": None})
+    pick_call_id, _ = await ask(engine, {"goal": "g"}, {"pick": question}, phase="fill")
+
+    proposal = SimpleNamespace(
+        ready=CommandVariant(command="input swipe 1 2 3 4 300", rationale="r"), pending=None,
+        reasons=(), confidence=0.9, pick_call_id=pick_call_id,
+        gate_result=GateResult(GateVerdict.ACT, "read_only", 1.0, "cid-gate-unrelated"),
+    )
+    async def _propose(jev, device, goal):
+        return proposal
+
+    monkeypatch.setitem(dispatch.KIND_TABLE, "swipe", dispatch.KindHandler(
+        propose=_propose,
+        execute=lambda jev, device, goal, proposal, command, **kw: _exit_zero(),
+        resume_arg=lambda proposal: None,
+    ))
+
+    await dispatch.run_kind(engine, object(), "swipe", "go back")
+
+    assert journal.labeled_pairs("swipe.pick", "confidence", engine="jev", any_revision=True) == [(0.9, True)]
+    assert journal.labeled_pairs("gate", "noul_p", engine="jev", any_revision=True) == []
+
+
+async def _exit_zero() -> int:
+    return 0
 
 
 # --- every ask() call site carries a phase label -----------------------------

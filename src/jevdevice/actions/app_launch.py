@@ -68,6 +68,7 @@ async def launch_app_for_goal(jev: JudgeEngine, device: Device, goal: str, *, ve
         jev, goal, packages,
         instructions=question_sets.text("open_app.pick"),
         fit_instructions=question_sets.text("open_app.fit"),
+        pick_qid="open_app.pick",
     )
     if verbose:
         print(f"shortlist: {verdict.shortlist}")

@@ -314,8 +314,8 @@ def response_for(kind: str, outcome, engine_name: str) -> dict:
 
 
 def call_id_of(proposal) -> str | None:
-    """The gate ask's call_id carried by any proposal shape, so executed actions
-    join their outcome row to the decision row that approved them."""
+    """The gate ask's call_id carried by any proposal shape, so approval
+    resumption (Pending/PendingAction) joins the decision row that gated it."""
     gate = getattr(proposal, "gate_result", None)
     if gate is not None and gate.call_id:
         return gate.call_id
@@ -323,6 +323,20 @@ def call_id_of(proposal) -> str | None:
     if pending is not None and pending.gate_result is not None:
         return pending.gate_result.call_id
     return None
+
+
+def pick_call_id_of(proposal) -> str | None:
+    """The pick ask's own row -- device-verified outcomes label THIS (the
+    answer key the verdict speaks to), never the gate's. Falls back to
+    call_id_of for kinds where pick and gate share one fused ask."""
+    return getattr(proposal, "pick_call_id", None) or call_id_of(proposal)
+
+
+# toggle_service's labelable answer is "service"; every other gated kind asks its choice under "pick".
+PICK_KEY_FOR = {
+    "toggle_service": "service", "tap": "pick", "long_press": "pick", "type_text": "pick",
+    "keyevent": "pick", "swipe": "pick", "set_dnd": "pick",
+}
 
 
 # --- one atomic action, one shared execution path -----------------------------
@@ -349,7 +363,7 @@ async def _run_ungated(
         after = result.package if result.launched and result.package else await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.record_action(
-            device=device, call_id=result.call_id, key=kind,
+            device=device, call_id=result.call_id, key="pick", kind=kind,
             executed_command=f"monkey -p {result.package} 1" if result.package else None,
             response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
@@ -358,7 +372,7 @@ async def _run_ungated(
         result = await run_dumpsys_query(jev, device, goal, verbose=False)
         response = response_for(kind, result, jev.name)
         outcomes.record_action(
-            device=device, call_id=result.call_id, key=kind,
+            device=device, call_id=result.call_id, key="pick", kind=kind,
             executed_command=f"dumpsys {result.service}" if result.service else None,
             response=response, tier=tier, recipe_id=recipe_id,
         )
@@ -370,7 +384,7 @@ async def _run_ungated(
         after = await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.record_action(
-            device=device, call_id=result.call_id, key=kind,
+            device=device, call_id=result.call_id, key="pick", kind=kind,
             executed_command=result.executed[-1] if result.executed else None, response=response,
             executed=list(result.executed), graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
@@ -378,7 +392,7 @@ async def _run_ungated(
     if kind == "screenshot":
         response = {"status": "ok"}
         outcomes.record_action(
-            device=device, call_id=None, key=kind, executed_command="screencap -p",
+            device=device, call_id=None, key=None, kind=kind, executed_command="screencap -p",
             response=response, tier=tier, recipe_id=recipe_id,
         )
         return response
@@ -432,7 +446,8 @@ async def run_kind(
     )
     response = response_for(kind, outcome, jev.name)
     outcomes.record_action(
-        device=device, call_id=call_id, key=kind, gate=getattr(proposal, "gate_result", None),
+        device=device, call_id=pick_call_id_of(proposal), key=PICK_KEY_FOR.get(kind), kind=kind,
+        gate=getattr(proposal, "gate_result", None),
         executed_command=command.command, response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
     )
     if kind in ("tap", "long_press", "type_text"):

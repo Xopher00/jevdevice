@@ -92,13 +92,14 @@ class ToggleProposal:
     pending: Pending | None = None
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
+    pick_call_id: str | None = None  # the "service"/"enabled" answers' own row -- device verdicts label this
 
 
 async def propose_toggle(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> ToggleProposal:
     if verbose:
         print("--- step 2: Jev fills the two closed-set arguments (batched) ---")
     profile = current_profile(jev.name)
-    _, answers = await ask(
+    call_id, answers = await ask(
         jev,
         {"goal": goal, "radio_options": TOGGLEABLE_SERVICES},
         {
@@ -130,7 +131,8 @@ async def propose_toggle(jev: JudgeEngine, device: Device, goal: str, *, verbose
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})\n")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
-    return ToggleProposal(service, enabled, ready, pending, reasons, gate_result=gate_result)
+    return ToggleProposal(service, enabled, ready, pending, reasons,
+                          gate_result=gate_result, pick_call_id=call_id)
 
 
 @dataclass
@@ -156,7 +158,7 @@ async def execute_toggle(
         jev, goal, services,
         instructions=question_sets.text("toggle.resolve_status.pick"),
         fit_instructions=question_sets.text("toggle.resolve_status.fit", toggled_service=service),
-        state_extra={"toggled_service": service},
+        state_extra={"toggled_service": service}, pick_qid="toggle.resolve_status.pick",
     )
     if verbose:
         print(f"shortlist: {resolve_verdict.shortlist}")
@@ -195,7 +197,7 @@ async def propose_keyevent(jev: JudgeEngine, goal: str, *, verbose: bool = True)
         command_for=lambda key: CommandVariant(command=f"input keyevent KEYCODE_{key}", rationale=f"press {key} per the goal"),
         label_for=lambda key: f"press {key}",
         gate_instructions=KEYEVENT_SAFE_INSTRUCTIONS,
-        verbose=verbose,
+        verbose=verbose, pick_qid="keyevent.pick", any_fit_qid="keyevent.any_fit", gate_qid="keyevent.safe",
     )
 
 
@@ -224,7 +226,7 @@ async def propose_dnd(jev: JudgeEngine, goal: str, *, verbose: bool = True) -> C
         command_for=lambda mode: CommandVariant(command=f"cmd notification set_dnd {mode}", rationale=f"set Do Not Disturb to {mode} per the goal"),
         label_for=lambda mode: f"set Do Not Disturb to {mode}",
         gate_instructions=DND_SAFE_INSTRUCTIONS,
-        verbose=verbose,
+        verbose=verbose, pick_qid="dnd.pick", any_fit_qid="dnd.any_fit", gate_qid="dnd.safe",
     )
 
 
@@ -254,7 +256,7 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
         jev, goal, services,
         instructions=question_sets.text("dumpsys_query.pick"),
         fit_instructions=question_sets.text("dumpsys_query.fit"),
-        accept_any_fitting=True,
+        accept_any_fitting=True, pick_qid="dumpsys_query.pick",
     )
     if verbose:
         print(f"shortlist: {verdict.shortlist}")
@@ -285,7 +287,7 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
             instructions=question_sets.text("dumpsys_field.pick"),
             fit_instructions=question_sets.text("dumpsys_field.fit"),
             evidence_for=_field_values,
-            accept_any_fitting=True,
+            accept_any_fitting=True, pick_qid="dumpsys_field.pick",
         )
         if field_verdict.ok:
             answer_key = field_verdict.choice

@@ -419,7 +419,7 @@ async def test_run_kind_unattended_runs_a_ready_command(monkeypatch, journal_rec
     result = await planner.run_kind_unattended(
         SimpleNamespace(name="jev"), DumpTransport(), "swipe", "go back home")
     assert result.detail.get("status") == "verified"
-    row = [r for r in journal_recorder.outcomes if r.get("key") == "swipe"][-1]
+    row = [r for r in journal_recorder.outcomes if r.get("kind") == "swipe"][-1]
     assert journal_recorder.verdicts[-1]["verdict"].status == "verified"
     assert row["executed_command"] == "input keyevent 4"
     assert row["call_id"] == "cid-gate"

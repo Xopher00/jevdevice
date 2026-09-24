@@ -93,7 +93,8 @@ async def _score_chunk(
     pick_criteria = choice_criteria(_as_criteria(chunk), profile)
     _, answers = await ask(jev, state, {
         "any": question_sets.noul("recall.any"),
-        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=instructions, criteria=pick_criteria),
+        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid
+                else Choice(instructions=instructions, criteria=pick_criteria),
     }, phase="recall")
     probabilities = {
         candidate: probability for candidate, probability in answers["pick"].probabilities.items()
@@ -160,7 +161,8 @@ async def _pick_and_decide(
     # This ask's call_id travels out on the verdict so the downstream outcome row
     # (open_app/dumpsys/scroll_to_find) joins the decision row that picked what ran.
     call_id, answers = await ask(jev, state, {
-        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=instructions, criteria=pick_criteria),
+        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid
+                else Choice(instructions=instructions, criteria=pick_criteria),
         **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source),
     }, phase="ground")
     pick = answers["pick"]
