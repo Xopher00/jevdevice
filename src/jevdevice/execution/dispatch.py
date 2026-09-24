@@ -11,7 +11,6 @@ import asyncio
 import inspect
 import sys
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -41,7 +40,7 @@ from jevdevice.actions.ui import (
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
 from jevdevice.common import bootstrap, gated
 from jevdevice.device import Device
-from jevdevice.jev import JevClient
+from jevdevice.jev import JudgeEngine, ask
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import ESCALATED, goal_scope
 from jevdevice.judge.gate import CommandVariant, confirm_with_human
@@ -70,7 +69,7 @@ class KindPick:
     call_id: str | None = None  # journal linkage: escalated kind picks join their outcome row via this
 
 
-async def pick_kind(jev: JevClient, goal: str, device: Device | None = None, *, verbose: bool = True) -> KindPick:
+async def pick_kind(jev: JudgeEngine, goal: str, device: Device | None = None, *, verbose: bool = True) -> KindPick:
     """Which ONE atomic action kind this goal is asking for -- the calling agent
     (human at the CLI, or an LLM composing MCP tool calls) decides sequencing;
     this only ever resolves a single goal to a single kind. `transport`, when given,
@@ -92,21 +91,21 @@ async def pick_kind(jev: JevClient, goal: str, device: Device | None = None, *, 
             kind_question_id = "kind.pick_screen"
         except Exception:  # noqa: BLE001, S110 -- any dump failure just means picking the kind without screen grounding
             pass
-    call_id = str(uuid.uuid4())
-    answers = await jev.ask(
+    call_id, answers = await ask(
+        jev,
         state,
         {
-            "kind": question_sets.choice(kind_question_id, choice_criteria(ACTION_KINDS, current_profile(jev.engine_name))),
+            "kind": question_sets.choice(kind_question_id, choice_criteria(ACTION_KINDS, current_profile(jev.name))),
             "any_fit": question_sets.noul("kind.any_fit"),
         },
-        phase="kind", call_id=call_id, truncation=truncation,
+        phase="kind", truncation=truncation,
     )
     kind_pick = answers["kind"]
     if verbose:
         print(f"picked kind: {kind_pick.choice} (confidence {kind_pick.confidence:.2f}, any_fit {answers['any_fit'].noul:.2f})\n")
     if is_abstain(kind_pick.choice):
         return KindPick(None, kind_pick.confidence, ("judge abstained: picked none_of_these, so no action kind fits this goal",), call_id=call_id)
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     if answers["any_fit"].noul < profile.noul_floor:
         return KindPick(None, kind_pick.confidence, (f"none of the {len(ACTION_KINDS)} action kinds fit this goal",), call_id=call_id)
     kind = gated(kind_pick, profile=profile)
@@ -120,7 +119,7 @@ class KindHandler:
     """Normalizes one kind's real propose/execute signatures into one shape -- the single
     source run_toolkit (CLI) and mcp_server.py's device_do/device_approve (MCP) both dispatch
     through, so ACTION_KINDS and the actual dispatch can no longer silently drift apart."""
-    propose: Callable[[JevClient, Device, str], Awaitable]
+    propose: Callable[[JudgeEngine, Device, str], Awaitable]
     execute: Callable[..., Awaitable]
     resume_arg: Callable[[object], object]
 
@@ -178,7 +177,7 @@ def _resolve_pending(proposal, *, verbose: bool) -> CommandVariant | None:
     return command
 
 
-async def run_toolkit(jev: JevClient, device: Device, goal: str, *, verbose: bool = True):
+async def run_toolkit(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True):
     """CLI convenience: one goal -> one atomic action, resolving needs_approval
     with a blocking prompt. Sequencing multi-step goals is the caller's job --
     run this (or the matching MCP tool) once per step."""
@@ -186,7 +185,7 @@ async def run_toolkit(jev: JevClient, device: Device, goal: str, *, verbose: boo
         return await _run_toolkit_scoped(jev, device, goal, verbose=verbose)
 
 
-async def _run_toolkit_scoped(jev: JevClient, device: Device, goal: str, *, verbose: bool = True):
+async def _run_toolkit_scoped(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True):
     if verbose:
         print(f"goal: {goal!r}\n")
     pick = await pick_kind(jev, goal, device, verbose=verbose)
@@ -344,7 +343,7 @@ async def _run_ungated(
     if kind == "open_app":
         before = await outcomes.foreground_safe(device)
         result = await launch_app_for_goal(jev, device, goal, verbose=False)
-        response = response_for(kind, result, jev.engine_name)
+        response = response_for(kind, result, jev.name)
         # The launch verification already proved the foreground package; ride
         # that device truth instead of paying a second dump when it ran.
         after = result.package if result.launched and result.package else await outcomes.foreground_safe(device)
@@ -358,7 +357,7 @@ async def _run_ungated(
         return response
     if kind == "dumpsys":
         result = await run_dumpsys_query(jev, device, goal, verbose=False)
-        response = response_for(kind, result, jev.engine_name)
+        response = response_for(kind, result, jev.name)
         outcomes.emit_outcome(
             device=device, call_id=result.call_id,
             executed_command=f"dumpsys {result.service}" if result.service else None,
@@ -369,7 +368,7 @@ async def _run_ungated(
     if kind == "scroll_to_find":
         before = await outcomes.foreground_safe(device)
         result = await scroll_to_find(jev, device, goal, direction=direction, max_attempts=max_attempts, verbose=False)
-        response = response_for(kind, result, jev.engine_name)
+        response = response_for(kind, result, jev.name)
         after = await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.emit_outcome(
@@ -434,7 +433,7 @@ async def run_kind(
     outcome, edge = await outcomes.graph_edge_around(
         device, lambda: handler.execute(jev, device, goal, proposal, command, verify=verify, verbose=False),
     )
-    response = response_for(kind, outcome, jev.engine_name)
+    response = response_for(kind, outcome, jev.name)
     outcomes.emit_outcome(
         device=device, call_id=call_id, executed_command=command.command,
         verification=outcomes.verification_from_response(response), response=response,

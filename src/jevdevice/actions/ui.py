@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import shlex
-import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -16,7 +15,7 @@ from dataclasses import dataclass
 from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
 from jevdevice.device import Device
-from jevdevice.jev import Choice, JevClient, Noul
+from jevdevice.jev import Choice, JudgeEngine, Noul, ask
 from jevdevice.judge.gate import (
     ClosedSetProposal,
     CommandVariant,
@@ -108,7 +107,7 @@ class TapProposal:
 
 
 async def _fused_pick_and_gate(
-    jev: JevClient, goal: str, options: dict[str, Element], *,
+    jev: JudgeEngine, goal: str, options: dict[str, Element], *,
     pick_instructions: str, fit_instructions: str, safe_fused_id: str, safe_instructions: str,
     command_for, chosen_label_for, fit_generated_source: str | None = None,
 ) -> tuple[NarrowVerdict, GateResult | None]:
@@ -122,7 +121,7 @@ async def _fused_pick_and_gate(
     `options` is the option map the judge answers over (short raw labels on profiles with
     short_labels, full labels otherwise); option keys double as the dict keys for the
     winner's coordinates/bounds."""
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     if profile.descriptions_in_state:
         # Rich descriptions ride in the state body; the option list in the head stays short.
         criteria = {c: (element.description or None) for c, element in options.items()}
@@ -144,8 +143,7 @@ async def _fused_pick_and_gate(
     }
     # One call_id covers the fused pick + its own gate answer, so the downstream
     # outcome row joins the single ask that produced both.
-    call_id = str(uuid.uuid4())
-    answers = await jev.ask({"goal": goal, "candidates": criteria}, questions, phase="recall", call_id=call_id)
+    call_id, answers = await ask(jev, {"goal": goal, "candidates": criteria}, questions, phase="recall")
     pick = answers["pick"]
     fits = extract_fits(answers, options)
     if is_abstain(pick.choice):
@@ -177,7 +175,7 @@ async def _cached_or_narrow(
 
 
 async def _propose_gesture(
-    jev: JevClient, device: Device, goal: str, *,
+    jev: JudgeEngine, device: Device, goal: str, *,
     parse_elements, pick_instructions: str, fit_instructions: str, safe_fused_id: str,
     safe_question_id: str, command_for, chosen_label_for, verbose: bool = True,
     fit_generated_source: str | None = None,
@@ -192,7 +190,7 @@ async def _propose_gesture(
     if verbose:
         print(f"{len(elements)} real matching elements on screen")
 
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     # The option map the judge answers over: short raw labels where the profile
     # asks for them, the full labels otherwise. Everything downstream (cache,
     # coordinates, gate evidence) keys off this map, so the judge's answer
@@ -243,7 +241,7 @@ async def _propose_gesture(
 
 
 async def propose_tap(
-    jev: JevClient, device: Device, goal: str, *, verbose: bool = True,
+    jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True,
     fit_instructions: str | None = None,
 ) -> TapProposal:
     """Narrow real on-screen elements + gate the resulting tap. No execution. The fit wording
@@ -269,7 +267,7 @@ LONG_PRESS_SAFE_INSTRUCTIONS = question_sets.text("long_press.safe")
 
 
 async def propose_long_press(
-    jev: JevClient, device: Device, goal: str, *, verbose: bool = True,
+    jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True,
     fit_instructions: str | None = None,
 ) -> TapProposal:
     """Narrow real long-clickable elements + gate the resulting long-press. No execution --
@@ -296,7 +294,7 @@ DIRECTIONS = {"up": None, "down": None, "left": None, "right": None}
 SWIPE_SAFE_INSTRUCTIONS = question_sets.text("swipe.safe")
 
 
-async def propose_swipe(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
+async def propose_swipe(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
     """Pick one of the four real swipe directions for the goal + gate it. No execution."""
     width, height = await device.window_size()
     cx, cy = width // 2, height // 2
@@ -339,7 +337,7 @@ class ScrollToFindOutcome:
 
 
 async def scroll_to_find(
-    jev: JevClient, device: Device, goal: str, *,
+    jev: JudgeEngine, device: Device, goal: str, *,
     direction: str = "down", max_attempts: int = 8, verbose: bool = True,
 ) -> ScrollToFindOutcome:
     """Re-checks the real screen against the goal every attempt and swipes only when the
@@ -349,7 +347,7 @@ async def scroll_to_find(
     last_call_id: str | None = None
     for attempt in range(1, max_attempts + 1):
         elements = parse_all_elements(await dump_screen(device))
-        options = short_options(elements) if current_profile(jev.engine_name).short_labels else elements
+        options = short_options(elements) if current_profile(jev.name).short_labels else elements
         verdict = await narrow_and_pick(
             jev, goal, list(options),
             instructions=question_sets.text("scroll_to_find.pick"),
@@ -376,7 +374,7 @@ async def scroll_to_find(
 
 
 async def _verify_after_action(
-    jev: JevClient, device: Device, goal: str, acted_on: str, *,
+    jev: JudgeEngine, device: Device, goal: str, acted_on: str, *,
     delays: tuple[float, ...], verbose: bool,
 ) -> float:
     """Shared by execute_tap/execute_type: re-probe the real screen and ask
@@ -387,14 +385,15 @@ async def _verify_after_action(
         # A fixed-length raw-XML truncation can cut off the real evidence entirely (confirmed
         # live); compact per-element labels carry far more real signal per character.
         truncation: dict = {}
-        screen_after = describe_screen(await dump_screen(device), goal=goal, limit=current_profile(jev.engine_name).screen_limit, telemetry=truncation)
-        answers = await jev.ask(
+        screen_after = describe_screen(await dump_screen(device), goal=goal, limit=current_profile(jev.name).screen_limit, telemetry=truncation)
+        _, answers = await ask(
+            jev,
             {"goal": goal, "acted_on": acted_on, "screen_after": screen_after},
             {"satisfied": question_sets.noul("verify.satisfied_after_action")},
             phase="verify", truncation=truncation,
         )
         satisfied = answers["satisfied"].noul
-        if satisfied >= current_profile(jev.engine_name).noul_floor:
+        if satisfied >= current_profile(jev.name).noul_floor:
             break
     if verbose:
         print(f"goal met: {satisfied >= 0.5} (noul={satisfied:.2f})")
@@ -402,7 +401,7 @@ async def _verify_after_action(
 
 
 async def _execute(
-    jev: JevClient, device: Device, goal: str, element: str, command: CommandVariant, *,
+    jev: JudgeEngine, device: Device, goal: str, element: str, command: CommandVariant, *,
     confidence: float, verify: bool, delays: tuple[float, ...], verbose: bool,
 ) -> ActionOutcome:
     """Shared by execute_tap/execute_type: run the approved command, then verify
@@ -415,7 +414,7 @@ async def _execute(
 
 
 async def execute_tap(
-    jev: JevClient, device: Device, goal: str, element: str, command: CommandVariant, *,
+    jev: JudgeEngine, device: Device, goal: str, element: str, command: CommandVariant, *,
     confidence: float = 0.0, verify: bool = True, delays: tuple[float, ...] = (0.0, 0.0, 0.0), verbose: bool = True,
 ) -> ActionOutcome:
     """Run an approved tap. verify=False skips the post-tap dump+Jev-ask
@@ -453,11 +452,12 @@ def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
     return tuple(reasons)
 
 
-async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | None:
+async def _pick_value(jev: JudgeEngine, goal: str, spans: list[str]) -> dict | None:
     if not spans:
         return None
-    profile = current_profile(jev.engine_name)
-    return await jev.ask(
+    profile = current_profile(jev.name)
+    _, answers = await ask(
+        jev,
         {"goal": goal, "candidate_values": spans},
         {
             "value": question_sets.choice("type_value.pick", choice_criteria({s: None for s in spans}, profile)),
@@ -465,17 +465,18 @@ async def _pick_value(jev: JevClient, goal: str, spans: list[str]) -> dict | Non
         },
         phase="fill",
     )
+    return answers
 
 
 async def _fused_field_and_value(
-    jev: JevClient, goal: str, options: dict[str, Element], spans: list[str], fit_instructions: str,
+    jev: JudgeEngine, goal: str, options: dict[str, Element], spans: list[str], fit_instructions: str,
     *, fit_generated_source: str | None = None,
 ) -> tuple[NarrowVerdict, dict | None]:
     """Batches field-narrow with value-pick into one real request on a cache miss -- they're
     independent facts that previously cost two separate round trips (asyncio.gather only
     overlaps wall-clock time, it doesn't merge the payloads). `options` is the judge's
     option map (short labels on profiles with short_labels, full labels otherwise)."""
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     if profile.descriptions_in_state:
         field_criteria = {c: (element.description or None) for c, element in options.items()}
     else:
@@ -489,7 +490,7 @@ async def _fused_field_and_value(
         state["candidate_values"] = spans
         questions["value"] = question_sets.choice("type_value.pick", choice_criteria({s: None for s in spans}, profile))
         questions["any_fit_value"] = question_sets.noul("type_value.any_fit")
-    answers = await jev.ask(state, questions, phase="fill")
+    _, answers = await ask(jev, state, questions, phase="fill")
     pick = answers["pick"]
     fits = extract_fits(answers, options)
     if is_abstain(pick.choice):
@@ -504,7 +505,7 @@ async def _fused_field_and_value(
 
 
 async def propose_type(
-    jev: JevClient, device: Device, goal: str, *, verbose: bool = True,
+    jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True,
     fit_instructions: str | None = None,
 ) -> TypeProposal:
     """Narrow real editable fields + extract/pick the real value to type + gate. No execution.
@@ -517,7 +518,7 @@ async def propose_type(
     if not elements:
         return TypeProposal(None, None, 0.0, reasons=_no_editable_field_reasons(dump_xml, goal))
 
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     options = short_options(elements) if profile.short_labels else elements
     spans = extract_value_spans(goal)
     cache_key = (foreground_package(dump_xml), goal)
@@ -573,7 +574,7 @@ async def propose_type(
 
 
 async def execute_type(
-    jev: JevClient, device: Device, goal: str, element: str, command: CommandVariant, *,
+    jev: JudgeEngine, device: Device, goal: str, element: str, command: CommandVariant, *,
     confidence: float = 0.0, verify: bool = True, delays: tuple[float, ...] = (0.0, 0.0, 0.0), verbose: bool = True,
 ) -> ActionOutcome:
     """Run an approved type-into-field action. verify=False skips the

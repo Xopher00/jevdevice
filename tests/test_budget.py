@@ -7,6 +7,10 @@ from __future__ import annotations
 from dataclasses import replace
 from unittest.mock import patch
 
+import pytest
+from typesymbolic.judge import AskResult
+from typesymbolic.question import Answer
+
 from jevdevice.actions.elements import parse_actionable_elements, short_options
 from jevdevice.budget import (
     JEV_PROFILE,
@@ -17,35 +21,60 @@ from jevdevice.budget import (
     is_abstain,
     profile_for,
 )
-from jevdevice.jev import ChoiceAnswer, NoulAnswer
+from jevdevice.journal import decision_log
 from jevdevice.judge.gate import propose_from_closed_set
 from jevdevice.judge.narrowing import narrow_and_pick
 
 
-class FakeJudge:
-    """Scripted ask(): pops one answers payload per call, records every call."""
+class RecordingJournal:
+    def __init__(self) -> None:
+        self.decisions: list[dict] = []
+        self.outcomes: list[dict] = []
 
-    def __init__(self, engine_name: str, payloads: list[dict]) -> None:
-        self.engine_name = engine_name
+    def record_decision(self, **row) -> None:
+        self.decisions.append(row)
+
+    def record_outcome(self, **row) -> None:
+        self.outcomes.append(row)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_journal(monkeypatch):
+    monkeypatch.setattr(decision_log, "_default_journal", RecordingJournal())
+
+
+class FakeJudge:
+    """Scripted ask_all(): pops one AskResult per call, records every call."""
+
+    def __init__(self, name: str, payloads: list[dict]) -> None:
+        self.name = name
         self.payloads = list(payloads)
         self.calls: list[dict] = []
 
-    async def ask(self, state, questions, **kw):
-        self.calls.append({"state": state, "questions": questions, **kw})
-        return self.payloads.pop(0)
+    async def ask_all(self, state, questions) -> AskResult:
+        self.calls.append({"state": state, "questions": questions})
+        return AskResult(answers=self.payloads.pop(0))
+
+
+def _choice(choice: str, probabilities: dict[str, float], confidence: float) -> Answer:
+    return Answer.from_choice(qid="", choice=choice, probabilities=probabilities, confidence=confidence)
+
+
+def _noul(noul: float) -> Answer:
+    return Answer.from_noul(qid="", noul=noul)
 
 
 def _round2_payload(choice: str, n_options: int, *, confidence: float = 0.9, fit: float = 0.9) -> dict:
     return {
-        "pick": ChoiceAnswer(choice=choice, probabilities={choice: 0.85, NONE_OF_THESE: 0.15}, confidence=confidence),
-        **{f"fit_{i}": NoulAnswer(noul=fit) for i in range(n_options)},
+        "pick": _choice(choice, {choice: 0.85, NONE_OF_THESE: 0.15}, confidence),
+        **{f"fit_{i}": _noul(fit) for i in range(n_options)},
     }
 
 
 def _chunk_payload(choice: str) -> dict:
     return {
-        "any": NoulAnswer(noul=0.9),
-        "pick": ChoiceAnswer(choice=choice, probabilities={choice: 0.8, NONE_OF_THESE: 0.2}, confidence=0.8),
+        "any": _noul(0.9),
+        "pick": _choice(choice, {choice: 0.8, NONE_OF_THESE: 0.2}, 0.8),
     }
 
 
@@ -54,7 +83,7 @@ def _chunk_payload(choice: str) -> dict:
 def test_profile_selection_keys_off_the_answering_engine() -> None:
     assert profile_for("laya") is LAYA_PROFILE
     assert profile_for("jev") is JEV_PROFILE
-    # An unknown name (a test double without an engine_name) gets the historical knobs.
+    # An unknown name (a test double without a name) gets the historical knobs.
     assert profile_for("bogus") is JEV_PROFILE
 
 
@@ -96,8 +125,8 @@ def test_is_abstain() -> None:
 
 async def test_abstain_pick_escalates_in_a_closed_set() -> None:
     judge = FakeJudge("laya", [{
-        "pick": ChoiceAnswer(choice=NONE_OF_THESE, probabilities={NONE_OF_THESE: 0.95}, confidence=0.95),
-        "any_fit": NoulAnswer(noul=0.1),
+        "pick": _choice(NONE_OF_THESE, {NONE_OF_THESE: 0.95}, 0.95),
+        "any_fit": _noul(0.1),
     }])
     proposal = await propose_from_closed_set(
         judge, "press home", dict.fromkeys(["HOME", "BACK"]),
@@ -160,8 +189,8 @@ async def test_merged_sweep_shortlist_is_capped_at_the_profile_shortlist() -> No
     def chunk_with_three_winners(base: int) -> dict:
         picks = [f"pkg.{base}", f"pkg.{base + 1}", f"pkg.{base + 2}"]
         return {
-            "any": NoulAnswer(noul=0.9),
-            "pick": ChoiceAnswer(choice=picks[0], probabilities={picks[0]: 0.5, picks[1]: 0.3, picks[2]: 0.2}, confidence=0.5),
+            "any": _noul(0.9),
+            "pick": _choice(picks[0], {picks[0]: 0.5, picks[1]: 0.3, picks[2]: 0.2}, 0.5),
         }
 
     payloads = [_round2_payload(NONE_OF_THESE, LAYA_PROFILE.shortlist_size)]  # probe abstains

@@ -1,38 +1,45 @@
 """Shadow mode: while the primary engine answers live traffic, a second
 engine observes the exact same (state, questions) and journals its answers --
 and nothing else. Shadow answers are NEVER returned to a caller, NEVER
-executed, and NEVER read by the gate: the only thing that escapes _observe()
-is the decision row itself (engine="laya", shadow_of=<primary call_id>).
+executed, and NEVER read by the gate: the only thing that escapes it is the
+decision row itself (engine="laya", shadow_of=<primary call_id>), written by
+the same `jev.ask()` path every other call uses.
 
 Failure isolation is structural, not by convention: the shadow runs in its own
 asyncio task whose body is a catch-all -- a shadow crash prints and dies with
 the task, so the primary ask() (a different task) cannot observe it. The
-shadow's own ask() also journals its failure path (decision_log emits rows in
-a finally), so even broken shadow calls leave a paired, labelled row behind.
+shadow's own ask() also journals its failure path (ask_batch emits an error
+row in a finally-equivalent except), so even broken shadow calls leave a
+paired, labelled row behind.
 
 Knobs (named, env-selected, read at use time so tests can flip them):
 - JEV_SHADOW        "1" (default) = attach a laya shadow when the primary
                     engine is jev; "0" disables. The shadow checkpoint loads
-                    lazily on the first shadowed ask (JevClient.__init__ stays
-                    cheap; torch imports stay inside LayaClient._build_router).
-- JEV_SHADOW_MODE   "after" (default) = spawn the shadow ask only after the
-                    primary's answer and row are final (zero contention with
-                    the in-flight primary call); "concurrent" = spawn it
-                    alongside the primary request.
+                    lazily on the first shadowed ask.
+- JEV_SHADOW_MODE   "after" (default) or "concurrent": validated, read by
+                    calibrate/ tooling that reports on it. Core's `ask_batch`
+                    doesn't hand out a call_id until the primary request is
+                    done, so -- unlike the pre-migration hand-rolled client --
+                    the shadow's own re-ask can only start once shadow_of is
+                    known; both modes schedule it there. Kept as a distinct,
+                    validated knob rather than silently dropped: a future
+                    core hook to observe a call_id pre-request would let
+                    "concurrent" resume actually overlapping the primary.
 - SHADOW_DRAIN_TIMEOUT_S  aclose() grace for in-flight shadow asks before the
                     remainder are cancelled.
 
-Lifecycle: common.bootstrap() calls attach() on the jev branch; JevClient.ask()
-calls schedule() at two points (before_request / after_answer); aclose()
-drains. Everything else -- all 12 ask() call sites -- inherits shadowing
-unchanged, because they all go through ask().
+Lifecycle: common.bootstrap() calls attach() on the jev branch, hanging a
+`.shadow` JudgeEngine and a `.shadow_tasks` set off the primary judge (plain
+attribute assignment -- JevEngine carries no __slots__). jev.ask() calls
+schedule() once the primary's call_id is known; aclose() drains. Everything
+else -- every ask() call site -- inherits shadowing unchanged, because they
+all go through jev.ask().
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import uuid
 
 from jevdevice.budget import JEV_ENGINE_NAME
 
@@ -61,11 +68,11 @@ def mode() -> str:
 
 
 def attach(primary) -> None:
-    """Give the primary client its shadow observer. Jev traffic only: the phase
+    """Give the primary judge its shadow observer. Jev traffic only: the phase
     shadows laya against live jev decisions (the reverse would need TYPESAFE
     keys for every laya session and teaches nothing new). Idempotent: an
     already-attached shadow is left alone."""
-    if primary.shadow is not None or primary.engine_name != JEV_ENGINE_NAME or not enabled():
+    if getattr(primary, "shadow", None) is not None or primary.name != JEV_ENGINE_NAME or not enabled():
         return
     from jevdevice.common import (  # lazy: common imports this module
         DEFAULT_DEVICE,
@@ -76,38 +83,34 @@ def attach(primary) -> None:
     )
 
     primary.shadow = LayaClient(device=os.environ.get(DEVICE_ENV, DEFAULT_DEVICE))
+    primary.shadow_tasks = set()
 
 
-def schedule(primary, *, point: str, primary_call_id: str, state: object,
-             questions: dict, phase: str | None, goal_id: str | None,
-             truncation: dict | None) -> None:
-    """Spawn this ask()'s shadow observation, if the mode wants this point.
-    point='before_request' acts only in concurrent mode (shadow starts
-    alongside the primary request); point='after_answer' acts only in after
-    mode (shadow starts once the primary answer and row are final)."""
-    if primary.shadow is None:
+def schedule(primary, *, primary_call_id: str, state: object,
+             questions: dict, phase: str | None, truncation: dict | None) -> None:
+    """Spawn this ask()'s shadow observation, once the primary's call_id
+    exists (see the module docstring's JEV_SHADOW_MODE note)."""
+    if getattr(primary, "shadow", None) is None:
         return
-    if (point == "before_request") != (mode() == "concurrent"):
-        return
+    mode()  # still validated even though both modes schedule at the same point
     task = asyncio.get_running_loop().create_task(_observe(
         primary.shadow, primary_call_id=primary_call_id, state=state,
-        questions=questions, phase=phase, goal_id=goal_id, truncation=truncation,
+        questions=questions, phase=phase, truncation=truncation,
     ))
     primary.shadow_tasks.add(task)
     task.add_done_callback(primary.shadow_tasks.discard)
 
 
-async def _observe(shadow_client, *, primary_call_id: str, state: object,
-                   questions: dict, phase: str | None, goal_id: str | None,
-                   truncation: dict | None) -> None:
-    """Run one shadow ask with its OWN call_id, linked back to the primary row
-    via shadow_of. The answers stay inside this coroutine -- returning them is
-    the one thing this function must never do."""
+async def _observe(shadow_judge, *, primary_call_id: str, state: object,
+                   questions: dict, phase: str | None, truncation: dict | None) -> None:
+    """Run one shadow ask, linked back to the primary row via shadow_of. The
+    answers stay inside this coroutine -- returning them is the one thing
+    this function must never do."""
+    from jevdevice.jev import ask
+
     try:
-        await shadow_client.ask(
-            state, questions, phase=phase, goal_id=goal_id, truncation=truncation,
-            call_id=str(uuid.uuid4()), shadow_of=primary_call_id,
-        )
+        await ask(shadow_judge, state, questions, phase=phase,
+                 truncation=truncation, shadow_of=primary_call_id)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 -- a shadow failure must never break the primary path
@@ -118,7 +121,7 @@ async def drain(primary, timeout: float = SHADOW_DRAIN_TIMEOUT_S) -> None:
     """Wait briefly for in-flight shadow asks (aclose()), then cancel the
     remainder: a half-second predict is worth keeping, a 33 s cold checkpoint
     load is not worth a hung shutdown."""
-    pending = [task for task in primary.shadow_tasks if not task.done()]
+    pending = [task for task in getattr(primary, "shadow_tasks", ()) if not task.done()]
     if not pending:
         return
     _, still_running = await asyncio.wait(pending, timeout=timeout)

@@ -7,6 +7,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from typesymbolic.judge import JevEngine
+
 from jevdevice.judge import shadow
 
 from .budget import (  # engine names live in budget.py
@@ -17,8 +19,8 @@ from .budget import (  # engine names live in budget.py
     current_profile,
 )
 from .device import AdbDevice
-from .jev import JevClient
 from .laya_backend import LayaClient
+from .ledger import EngineInfo, UsageLedger
 from .matching import confidence_gate
 from .transport import AdbTransport
 
@@ -64,8 +66,12 @@ SERIAL = os.environ.get("ANDROID_SERIAL")
 DEVICE_ENV = "JEV_DEVICE"
 DEFAULT_DEVICE = "cpu"
 
+# Pinned, not "-latest": gate.py's threshold is calibrated against this
+# version's confidence computation.
+DEFAULT_MODEL = "jev-1.13.0"
 
-def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbDevice]:
+
+def bootstrap(serial: str | None = SERIAL) -> tuple[JevEngine | LayaClient, AdbDevice]:
     """Judge engine + device (the Device protocol's real Android
     implementation, over the frozen AdbTransport). The workspace .env is loaded
     first (env vars already set win), so TYPESAFE_AI_API and ANDROID_SERIAL
@@ -82,7 +88,9 @@ def bootstrap(serial: str | None = SERIAL) -> tuple[JevClient | LayaClient, AdbD
         api_key = os.environ.get("TYPESAFE_AI_API")
         if not api_key:
             raise SystemExit("TYPESAFE_AI_API not set (required for the jev engine; JEV_ENGINE=laya runs in-process)")
-        client: JevClient | LayaClient = JevClient(api_key)
+        client: JevEngine | LayaClient = JevEngine(api_key, DEFAULT_MODEL)
+        client.usage = UsageLedger()
+        client.usage.record_engine(EngineInfo(engine="jev", model_revision=DEFAULT_MODEL))
         # Shadow mode: while jev answers, a laya shadow observes and journals
         # (JEV_SHADOW=0 opts out). The checkpoint loads lazily on the first
         # shadowed ask, so this costs nothing until then.

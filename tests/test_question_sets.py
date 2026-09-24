@@ -17,11 +17,15 @@ import json
 import re
 from pathlib import Path
 
+import httpx2
 import pytest
 import typesymbolic.vocab
+from typesymbolic.journal import Journal
+from typesymbolic.judge import JevEngine
 
 from jevdevice import question_sets
-from jevdevice.jev import Noul
+from jevdevice.jev import Noul, ask
+from jevdevice.journal import decision_log
 from jevdevice.judge.gate import CommandVariant, finalize_gate
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "jevdevice"
@@ -90,39 +94,32 @@ def test_generated_noul_wire_invisible() -> None:
     assert question_sets.generated_source({"q": hatched}) == "test.hatch"
 
 
-class _FakeHTTP:
-    """Minimal stand-in for the httpx client: returns one canned payload."""
-
-    def __init__(self, payload: dict) -> None:
-        self.payload = payload
-
-    async def post(self, url, headers=None, json=None):
-        payload = self.payload
-        response = type("R", (), {"raise_for_status": lambda self: None, "json": lambda self: payload})()
-        return response
+def _canned_answer(request: httpx2.Request) -> httpx2.Response:
+    return httpx2.Response(200, json={
+        "model": "jev-1.13.0", "usage": {"input_tokens": 1, "output_tokens": 1},
+        "answers": {"q": {"type": "noul", "noul": 0.9}},
+    })
 
 
 async def test_ask_journals_generated_source_and_compiled_stays_none(tmp_path, monkeypatch) -> None:
-    from jevdevice.jev import JevClient
-    from jevdevice.journal.decision_log import DecisionJournal
-
     monkeypatch.delenv("JEV_JOURNAL", raising=False)
-    journal = DecisionJournal(tmp_path)
-    client = JevClient("test-key", journal=journal)
-    client._client = _FakeHTTP({"answers": {"q": {"type": "noul", "noul": 0.9}}})
-    answers = await client.ask(
+    journal = Journal(root=tmp_path, background_writes=False)
+    monkeypatch.setattr(decision_log, "_default_journal", journal)
+    engine = JevEngine(api_key="test-key", transport=httpx2.MockTransport(_canned_answer))
+    _, answers = await ask(
+        engine,
         {"goal": "g"},
         {"q": question_sets.generated_noul("propose_tap.fit_instructions_override", "does it fit?")},
         phase="fill",
     )
     assert answers["q"].noul == 0.9
     rows = [r for r in journal.replay() if r.get("type") == "decision"]
-    assert rows and rows[-1]["generated"] == "propose_tap.fit_instructions_override"
+    assert rows and rows[-1]["extra"]["generated"] == "propose_tap.fit_instructions_override"
 
-    # and a plain (compiled-shaped) question journals generated=None
-    await client.ask({"goal": "g"}, {"q": Noul(instructions="i")}, phase="fill")
+    # and a plain (compiled-shaped) question journals no generated entry
+    await ask(engine, {"goal": "g"}, {"q": Noul(instructions="i")}, phase="fill")
     rows = [r for r in journal.replay() if r.get("type") == "decision"]
-    assert rows[-1]["generated"] is None
+    assert rows[-1].get("extra", {}).get("generated") is None
 
 
 def test_no_instruction_literals_outside_question_sets() -> None:

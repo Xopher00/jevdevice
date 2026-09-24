@@ -14,7 +14,7 @@ from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
 from jevdevice.common import gated
 from jevdevice.device import Device
-from jevdevice.jev import JevClient
+from jevdevice.jev import JudgeEngine, ask
 from jevdevice.judge.gate import (
     ClosedSetProposal,
     CommandVariant,
@@ -94,11 +94,12 @@ class ToggleProposal:
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
 
 
-async def propose_toggle(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> ToggleProposal:
+async def propose_toggle(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> ToggleProposal:
     if verbose:
         print("--- step 2: Jev fills the two closed-set arguments (batched) ---")
-    profile = current_profile(jev.engine_name)
-    answers = await jev.ask(
+    profile = current_profile(jev.name)
+    _, answers = await ask(
+        jev,
         {"goal": goal, "radio_options": TOGGLEABLE_SERVICES},
         {
             "service": question_sets.choice("toggle.service", choice_criteria(TOGGLEABLE_SERVICES, profile)),
@@ -142,7 +143,8 @@ class ToggleOutcome:
 
 
 async def execute_toggle(
-    jev: JevClient, device: Device, goal: str, service: str, command: CommandVariant, *, verbose: bool = True,
+    jev: JudgeEngine, device: Device, goal: str, service: str, command: CommandVariant,
+    *, verbose: bool = True,
 ) -> ToggleOutcome:
     if verbose:
         print("--- step 4/5: real mutating command + real service enumeration (independent, run concurrently) ---")
@@ -171,18 +173,19 @@ async def execute_toggle(
     check = await device.run(f"dumpsys {check_service}")
     # The raw status text rides in state under the answering engine's profile
     # budget -- the clip is a named knob (budget.py), never a bare int.
-    verify = await jev.ask(
-        {"goal": goal, "service_state": check.stdout[:current_profile(jev.engine_name).probe_max_chars]},
+    _, verify = await ask(
+        jev,
+        {"goal": goal, "service_state": check.stdout[:current_profile(jev.name).probe_max_chars]},
         {"satisfied": question_sets.noul("toggle.verify_satisfied")},
         phase="verify",
     )
     satisfied = verify["satisfied"].noul
     if verbose:
-        print(f"\n=== RESULT ===\nJev verify noul: {satisfied:.2f}\ngoal met: {satisfied >= current_profile(jev.engine_name).noul_floor}")
+        print(f"\n=== RESULT ===\nJev verify noul: {satisfied:.2f}\ngoal met: {satisfied >= current_profile(jev.name).noul_floor}")
     return ToggleOutcome(result.exit_code, check_service, resolve_verdict.confidence, satisfied)
 
 
-async def propose_keyevent(jev: JevClient, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
+async def propose_keyevent(jev: JudgeEngine, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
     return await propose_from_closed_set(
         jev, goal, dict.fromkeys(KEY_EVENTS),
         options_key="key_options",
@@ -211,7 +214,7 @@ async def take_screenshot(device: Device) -> bytes:
     return await device.run_binary("screencap -p")
 
 
-async def propose_dnd(jev: JevClient, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
+async def propose_dnd(jev: JudgeEngine, goal: str, *, verbose: bool = True) -> ClosedSetProposal:
     return await propose_from_closed_set(
         jev, goal, DND_MODES,
         options_key="mode_options",
@@ -238,7 +241,7 @@ class DumpsysOutcome:
     call_id: str | None = None
 
 
-async def run_dumpsys_query(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> DumpsysOutcome:
+async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> DumpsysOutcome:
     if verbose:
         print("--- step 2: real probe for the open argument's real enumeration ---")
     services_raw = await device.run("dumpsys -l")

@@ -1,28 +1,28 @@
-"""Regression spec ported verbatim from da4e4a3's tests/test_decision_log.py:
-wire-shape freeze proof, call-site labels, outcome-row helpers, truncation
-telemetry. These exercise behaviour that SURVIVES in other modules (jev.py,
-outcomes.py, mcp_server.py, actions/elements.py) even though decision_log.py's
-DecisionJournal is gone -- they are the spec later agents (2b2 jev.py; 2c
-outcomes/gate/describe_screen) must port onto the core journal. Left failing
-on purpose until then."""
+"""Regression spec, ported onto core (typesymbolic) transport + journal for
+2b2: JevEngine over httpx2.MockTransport instead of a fake httpx.AsyncClient,
+decision_log._default_journal monkeypatched instead of a DecisionJournal
+instance, row field names updated to core's (answers/scope/asked/state/extra/
+error/elapsed_ms). The first 6 tests below are the ported ask()/journal spec
+(da4e4a3's tests/test_decision_log.py via aa1d9ee's verbatim copy); the last 4
+still exercise decision_log.NONE/VERIFIED-era outcome helpers that aren't
+migrated yet and are left for agent 2c, unmodified."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
+from typesymbolic.journal import Journal
+from typesymbolic.judge import JevEngine, JudgeError
 
-from jevdevice.jev import JevClient, JevError, Noul
+from jevdevice.jev import Noul, ask
 from jevdevice.journal import decision_log
-from jevdevice.journal.decision_log import (
-    DecisionJournal,
-    goal_id_for,
-    goal_scope,
-)
+from jevdevice.journal.decision_log import goal_id_for, goal_scope
 from jevdevice.judge.gate import CommandVariant, GateResult
 
 # mcp_server bootstrap() needs both env vars at import; placeholders are enough --
@@ -32,7 +32,7 @@ os.environ.setdefault("ANDROID_SERIAL", "placeholder-for-import")
 
 
 class RecordingJournal:
-    """Test double with the DecisionJournal record_* shape."""
+    """Test double with the core Journal's record_* shape."""
 
     def __init__(self) -> None:
         self.decisions: list[dict] = []
@@ -45,103 +45,89 @@ class RecordingJournal:
         self.outcomes.append(row)
 
 
-class _FakeResponse:
-    def __init__(self, payload: dict) -> None:
-        self._payload = payload
-
-    def raise_for_status(self) -> None:
-        pass
-
-    def json(self) -> dict:
-        return self._payload
+def _ok_response(**extra) -> httpx2.Response:
+    return httpx2.Response(200, json={
+        "model": "jev-1.13.0",
+        "usage": {"input_tokens": 10, "output_tokens": 2},
+        "answers": {"q1": {"type": "noul", "noul": 0.9}},
+        **extra,
+    })
 
 
-class _FakeHTTP:
-    def __init__(self, payload: dict) -> None:
-        self.payload = payload
-        self.bodies: list[dict] = []
-
-    async def post(self, url, headers=None, json=None):
-        self.bodies.append(json)
-        return _FakeResponse(self.payload)
-
-
-def _client_with(http_payload: dict, journal) -> tuple[JevClient, _FakeHTTP]:
-    client = JevClient("test-key", journal=journal)
-    fake = _FakeHTTP(http_payload)
-    client._client = fake
-    return client, fake
+def _engine(handler) -> JevEngine:
+    return JevEngine(api_key="test-key", transport=httpx2.MockTransport(handler))
 
 
 # --- ask() emits decision rows, wire body unchanged -------------------------
 
-_PAYLOAD = {"answers": {"q1": {"type": "noul", "noul": 0.9}}, "usage": {"input_tokens": 10, "output_tokens": 2}}
-
-
-async def test_ask_emits_a_replayable_decision_row() -> None:
+async def test_ask_emits_a_replayable_decision_row(monkeypatch) -> None:
     recorder = RecordingJournal()
-    client, _ = _client_with(_PAYLOAD, recorder)
-    answers = await client.ask({"goal": "press 7"}, {"q1": Noul(instructions="does it fit?")},
-                               phase="gate", call_id="cid-1", truncation={"elements_after": 3})
+    monkeypatch.setattr(decision_log, "_default_journal", recorder)
+    engine = _engine(lambda request: _ok_response())
+    call_id, answers = await ask(engine, {"goal": "press 7"}, {"q1": Noul(instructions="does it fit?")},
+                                 phase="gate", truncation={"elements_after": 3})
     assert answers["q1"].noul == 0.9
     row = recorder.decisions[0]
-    assert row["call_id"] == "cid-1"
+    assert row["call_id"] == call_id
     assert row["phase"] == "gate"
     assert row["engine"] == "jev"
-    assert row["model_revision"] == client._model
+    assert row["model_revision"] == "jev-1.13.0"
     assert row["state"] == {"goal": "press 7"}
-    assert row["questions"] == {"q1": {"type": "noul", "instructions": "does it fit?"}}
-    assert row["answers"] == {"q1": {"type": "noul", "noul": 0.9}}  # full distribution as sent back
-    assert row["truncation"] == {"elements_after": 3}
-    assert row["usage"] == {"input_tokens": 10, "output_tokens": 2}
-    assert row["error"] is None
+    assert row["asked"] == {"q1": {"type": "noul", "instructions": "does it fit?"}}
+    assert row["answers"]["q1"].noul == 0.9
+    assert row["extra"]["truncation"] == {"elements_after": 3}
+    assert row["extra"]["usage"] == {"input_tokens": 10, "output_tokens": 2}
+    assert row.get("error") is None
 
 
-async def test_ask_wire_body_stays_exactly_the_frozen_shape() -> None:
+async def test_ask_wire_body_stays_exactly_the_frozen_shape(monkeypatch) -> None:
     """The wire proof: journaling metadata must never reach the engine."""
     recorder = RecordingJournal()
-    client, fake = _client_with(_PAYLOAD, recorder)
+    monkeypatch.setattr(decision_log, "_default_journal", recorder)
+    bodies: list[dict] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return _ok_response()
+
+    engine = _engine(handler)
     with goal_scope("open the calculator"):
-        await client.ask({"goal": "press 7"}, {"q1": Noul(instructions="i")},
-                         phase="gate", goal_id="explicit-id", call_id="cid", truncation={"a": 1})
-    body = fake.bodies[0]
+        await ask(engine, {"goal": "press 7"}, {"q1": Noul(instructions="i")}, phase="gate", truncation={"a": 1})
+    body = bodies[0]
     assert set(body) == {"model", "state", "questions"}, f"wire shape changed: {set(body)}"
     assert body["state"] == {"goal": "press 7"}
     assert "phase" not in body["questions"]["q1"]
 
 
-async def test_ask_without_scope_or_phase_logs_unlabeled_and_no_goal(tmp_path: Path) -> None:
-    client, _ = _client_with(_PAYLOAD, DecisionJournal(tmp_path))
-    await client.ask({"goal": "g"}, {"q1": Noul(instructions="i")})
-    row = next(iter(DecisionJournal(tmp_path).replay()))
-    assert row["phase"] == "unlabeled"
-    assert row["goal_id"] is None and row["goal"] is None
-    assert isinstance(row["call_id"], str) and uuid.UUID(row["call_id"])  # generated, valid
+async def test_ask_without_scope_or_phase_logs_unlabeled_and_no_goal(tmp_path: Path, monkeypatch) -> None:
+    journal = Journal(root=tmp_path, background_writes=False)
+    monkeypatch.setattr(decision_log, "_default_journal", journal)
+    engine = _engine(lambda request: _ok_response())
+    call_id, _ = await ask(engine, {"goal": "g"}, {"q1": Noul(instructions="i")})
+    row = next(iter(journal.replay()))
+    assert row["phase"] is None
+    assert row["scope"] == {}  # no goal_scope() active, no shadow -- nothing to carry
+    assert row["call_id"] == call_id and uuid.UUID(call_id)  # generated, valid
 
 
-async def test_ask_failure_still_journals_the_request_then_reraises() -> None:
+async def test_ask_failure_still_journals_the_request_then_reraises(monkeypatch) -> None:
     recorder = RecordingJournal()
-    client = JevClient("test-key", journal=recorder)
-
-    class _FailingHTTP:
-        async def post(self, url, headers=None, json=None):
-            raise httpx.ConnectError("boom")
-
-    client._client = _FailingHTTP()
-    with pytest.raises(JevError):
-        await client.ask({"goal": "g"}, {"q1": Noul(instructions="i")}, phase="verify")
+    monkeypatch.setattr(decision_log, "_default_journal", recorder)
+    engine = _engine(lambda request: httpx2.Response(400, json={"error": {"message": "boom"}}))
+    with pytest.raises(JudgeError):
+        await ask(engine, {"goal": "g"}, {"q1": Noul(instructions="i")}, phase="verify")
     row = recorder.decisions[0]
-    assert row["answers"] is None
-    assert "ConnectError" in row["error"]
+    assert row["answers"] == {}
+    assert row["error"]
     assert row["phase"] == "verify"
 
 
-async def test_call_id_is_generated_once_per_ask_when_not_supplied() -> None:
+async def test_call_id_is_generated_once_per_ask_when_not_supplied(monkeypatch) -> None:
     recorder = RecordingJournal()
-    client, _ = _client_with(_PAYLOAD, recorder)
-    await client.ask({"g": 1}, {"q1": Noul(instructions="i")})
-    await client.ask({"g": 2}, {"q1": Noul(instructions="i")})
-    first, second = (row["call_id"] for row in recorder.decisions)
+    monkeypatch.setattr(decision_log, "_default_journal", recorder)
+    engine = _engine(lambda request: _ok_response())
+    first, _ = await ask(engine, {"g": 1}, {"q1": Noul(instructions="i")})
+    second, _ = await ask(engine, {"g": 2}, {"q1": Noul(instructions="i")})
     assert first != second
 
 
@@ -149,13 +135,13 @@ async def test_call_id_is_generated_once_per_ask_when_not_supplied() -> None:
 
 def test_every_ask_call_site_carries_a_phase_label() -> None:
     """Static guard over src/jevdevice/*.py (calibrate/ CLIs excluded): any
-    jev.ask( call site added later must pass phase=... or this fails, so one
-    day of usage can't accumulate 'unlabeled' rows unnoticed."""
+    ask( call site added later must pass phase=... or this fails, so one
+    day of usage can't accumulate an unlabeled row unnoticed."""
     package_dir = Path(__file__).resolve().parent.parent / "src" / "jevdevice"
     offenders: list[str] = []
     for path in sorted(package_dir.glob("*.py")):
         text = path.read_text(encoding="utf-8")
-        for match in re.finditer(r"await \w+\.ask\(", text):
+        for match in re.finditer(r"await ask\(", text):
             depth, i = 1, match.end()
             while i < len(text) and depth:
                 if text[i] == "(":
@@ -169,7 +155,8 @@ def test_every_ask_call_site_carries_a_phase_label() -> None:
     assert not offenders, f"ask() call sites missing phase= label: {offenders}"
 
 
-# --- outcome-row helpers -----------------------------------------------------
+# --- outcome-row helpers (left for agent 2c: decision_log.NONE/VERIFIED, ----
+# --- outcomes.py, and mcp_server's outcome emission aren't migrated yet) ----
 
 def test_pending_action_carries_the_gate_call_id() -> None:
     from jevdevice import mcp_server

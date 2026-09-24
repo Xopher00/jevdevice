@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import re
 import shlex
-import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from itertools import pairwise
@@ -28,7 +27,7 @@ from typesymbolic.gate import GateResult, GateVerdict
 
 from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
-from jevdevice.jev import Choice, JevClient, Noul
+from jevdevice.jev import Choice, JudgeEngine, Noul, ask
 from jevdevice.matching import confidence_gate
 
 # Real argv shapes classified as read-only, by (argv[0], rest-of-argv-prefix-or-None).
@@ -154,9 +153,8 @@ def confirm_with_human(command: CommandVariant, chosen_label: str, confidence: f
 
 
 async def gate_command(
-    jev: JevClient, command: CommandVariant, chosen_label: str, threshold: float | None = None,
+    jev: JudgeEngine, command: CommandVariant, chosen_label: str, threshold: float | None = None,
     evidence: dict | None = None, instructions: str = DEFAULT_SAFE_INSTRUCTIONS,
-    *, call_id: str | None = None,
 ) -> GateResult:
     """`evidence` is real, code-verified data backing the command (e.g. the
     tapped element's actual on-screen bounds) -- something the model can check
@@ -169,17 +167,17 @@ async def gate_command(
         return GateResult(GateVerdict.ACT, "read_only")
     if is_denied(command.command):
         return GateResult(GateVerdict.DENY, "deny_listed")
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     threshold = profile.gate_threshold if threshold is None else threshold
 
-    # The call_id is generated HERE (not inside ask()) so it can travel onto the
-    # GateResult -> Pending -> PendingAction -> outcome row and join the two rows.
-    call_id = call_id or str(uuid.uuid4())
-    answers = await jev.ask(
+    # call_id travels onto the GateResult -> Pending -> PendingAction -> outcome
+    # row so the two rows join.
+    call_id, answers = await ask(
+        jev,
         {"chosen_action": chosen_label, "proposed_command": command.command, "rationale": command.rationale,
          **(evidence or {})},
         {"safe": Noul(instructions=instructions)},
-        phase="gate", call_id=call_id,
+        phase="gate",
     )
     return finalize_gate(command, answers["safe"].noul, threshold, call_id=call_id)
 
@@ -220,7 +218,7 @@ class ClosedSetProposal:
 
 
 async def propose_from_closed_set(
-    jev: JevClient, goal: str, options: dict[str, str | None], *,
+    jev: JudgeEngine, goal: str, options: dict[str, str | None], *,
     options_key: str, pick_instructions: str, any_fit_instructions: str,
     command_for: Callable[[str], CommandVariant], label_for: Callable[[str], str],
     gate_instructions: str, verbose: bool = True, pick_verb: str = "pick",
@@ -230,8 +228,9 @@ async def propose_from_closed_set(
     built from the winning option goes through gate_command. Never executes; returns
     reasons when nothing fits, the judge abstains (none_of_these), or the pick fails
     the confidence gate."""
-    profile = current_profile(jev.engine_name)
-    answers = await jev.ask(
+    profile = current_profile(jev.name)
+    _, answers = await ask(
+        jev,
         {"goal": goal, options_key: options},
         {
             "pick": Choice(instructions=pick_instructions, criteria=choice_criteria(options, profile)),

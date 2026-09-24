@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from jevdevice import question_sets
 from jevdevice.budget import current_profile
 from jevdevice.device import Device
-from jevdevice.jev import JevClient
+from jevdevice.jev import JudgeEngine, ask
 from jevdevice.judge.narrowing import narrow_and_pick
 
 from .elements import dump_screen, foreground_package
@@ -21,7 +21,7 @@ def parse_package_list(raw: str) -> list[str]:
 
 
 async def verify_with_retry(
-    jev: JevClient, device: Device, goal: str, chosen: str,
+    jev: JudgeEngine, device: Device, goal: str, chosen: str,
     delays: tuple[float, ...] = (0.0, 0.0, 0.0),
 ) -> tuple[bool, float, int, str]:
     """Real launches race a settling UI; retry with backoff. `dumpsys window`'s
@@ -32,13 +32,14 @@ async def verify_with_retry(
     for attempt, delay in enumerate(delays, start=1):
         await asyncio.sleep(delay)
         observed = foreground_package(await dump_screen(device))
-        answers = await jev.ask(
+        _, answers = await ask(
+            jev,
             {"goal": goal, "chosen_package": chosen, "foreground_package": observed, "attempt": attempt},
             {"satisfied": question_sets.noul("open_app.verify_satisfied")},
             phase="verify",
         )
         satisfied = answers["satisfied"].noul
-        if satisfied >= current_profile(jev.engine_name).noul_floor:
+        if satisfied >= current_profile(jev.name).noul_floor:
             return True, satisfied, attempt, observed or ""
     return False, satisfied, len(delays), observed or ""
 
@@ -57,7 +58,7 @@ class LaunchOutcome:
     call_id: str | None = None
 
 
-async def launch_app_for_goal(jev: JevClient, device: Device, goal: str, *, verbose: bool = True) -> LaunchOutcome:
+async def launch_app_for_goal(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> LaunchOutcome:
     """Real package listing -> two-round semantic narrow (narrowing.py) -> gate
     -> `monkey` launch -> Jev-verified retry."""
     probe = await device.run("pm list packages")

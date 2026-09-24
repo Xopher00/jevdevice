@@ -1,4 +1,4 @@
-"""Token/request accounting for JevClient.ask() calls -- nothing tracked this before,
+"""Token/request accounting for jev.ask() calls -- nothing tracked this before,
 so a runaway loop (a chain of chained actions, a batch eval) had no visible cost signal.
 """
 
@@ -39,8 +39,8 @@ class UsageSnapshot:
 
 
 class UsageLedger:
-    """Accumulates real per-request usage. One instance per JevClient; asyncio-single-threaded,
-    no lock needed (jevdevice never shares a JevClient across concurrent event loops)."""
+    """Accumulates real per-request usage. One instance per judge engine; asyncio-single-threaded,
+    no lock needed (jevdevice never shares an engine across concurrent event loops)."""
 
     def __init__(self) -> None:
         self._requests = 0

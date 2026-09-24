@@ -156,7 +156,7 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         handler = KIND_TABLE[action.kind]
         resume_proposal = _ResumeProposal(element=action.resume_arg, service=action.resume_arg, confidence=action.confidence)
         outcome = await handler.execute(jev, transport, action.goal, resume_proposal, approved, verify=action.verify, verbose=False)
-        response = response_for(action.kind, outcome, jev.engine_name)
+        response = response_for(action.kind, outcome, jev.name)
         after = await outcomes.foreground_safe(transport)
         graph_edge = {"from_node": before, "to_node": after} if (before or after) else None
         _emit_outcome(

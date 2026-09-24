@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from jevdevice import question_sets
 from jevdevice.actions.elements import describe_screen, dump_screen, screen_summary
 from jevdevice.budget import current_profile
+from jevdevice.jev import ask
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import NONE, VERIFIED, goal_id_for, goal_scope
 
@@ -87,12 +88,13 @@ async def _replay_chain(
     still-fits question per step and skip the ones that no longer apply.
     Returns (results, first failing step or None)."""
     results: list[StepResult] = []
-    floor = current_profile(jev.engine_name).noul_floor
+    floor = current_profile(jev.name).noul_floor
     for kind, step_goal in chain:
         if check_fit:
             truncation: dict = {}
             screen = screen_summary(await dump_screen(device), goal=step_goal, telemetry=truncation)
-            answers = await jev.ask(
+            _, answers = await ask(
+                jev,
                 {"goal": step_goal, "screen": screen},
                 {"fits": question_sets.noul("planner.step_still_fits", step_kind=kind, step_goal=step_goal)},
                 phase="recall", truncation=truncation,
@@ -111,13 +113,14 @@ async def _stepwise_loop(jev, device, goal: str, *, executor) -> tuple[list[Step
     """Pick the next action over the closed vocabulary, run it gated, repeat
     until the done-check confirms the goal or a bound trips."""
     results: list[StepResult] = []
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     escalations = 0
     for _ in range(MAX_PLANNER_STEPS):
         truncation: dict = {}
         screen_after = describe_screen(await dump_screen(device), goal=goal,
                                       limit=profile.screen_limit, telemetry=truncation)
-        done = await jev.ask(
+        _, done = await ask(
+            jev,
             {"goal": goal, "acted_on": "planner", "screen_after": screen_after},
             {"satisfied": question_sets.noul("verify.satisfied_after_action")},
             phase="verify", truncation=truncation,

@@ -28,13 +28,12 @@ hosted engine keeps today's behavior exactly):
 from __future__ import annotations
 
 import asyncio
-import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 
 from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
-from jevdevice.jev import Answer, Choice, JevClient, Question
+from jevdevice.jev import Answer, Choice, JudgeEngine, Question, ask
 from jevdevice.matching import (
     NarrowVerdict,
     chunk_candidates,
@@ -79,7 +78,7 @@ def _abstain_verdict(shortlist: Sequence[str], fits: dict[str, float], confidenc
 
 
 async def _score_chunk(
-    jev: JevClient, query: str, chunk: list[str], instructions: str, state_extra: dict | None,
+    jev: JudgeEngine, query: str, chunk: list[str], instructions: str, state_extra: dict | None,
 ) -> tuple[float, dict[str, float]]:
     """One ask per chunk: is anything here relevant, plus a Choice over this
     chunk's real members. Returns (chunk_relevance, {candidate: probability}).
@@ -87,9 +86,9 @@ async def _score_chunk(
     answer about the chunk, not a candidate in it."""
     if not chunk:
         return 0.0, {}
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     state = {"goal": query, "candidates": chunk, **(state_extra or {})}
-    answers = await jev.ask(state, {
+    _, answers = await ask(jev, state, {
         "any": question_sets.noul("recall.any"),
         "pick": Choice(instructions=instructions, criteria=choice_criteria(_as_criteria(chunk), profile)),
     }, phase="recall")
@@ -101,7 +100,7 @@ async def _score_chunk(
 
 
 async def semantic_shortlist(
-    jev: JevClient, query: str, candidates: list[str], *, instructions: str,
+    jev: JudgeEngine, query: str, candidates: list[str], *, instructions: str,
     chunk_size: int | None = None, k: int | None = None, state_extra: dict | None = None,
 ) -> list[str]:
     """Round 1: chunk relevance * within-chunk probability, keep the top k
@@ -110,7 +109,7 @@ async def semantic_shortlist(
     Choice whose option list must fit the head budget (more candidates than
     the head carries would be silently dropped by the engine, not error).
     chunk_size/k default to the answering engine's profile knobs."""
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     chunk_size = profile.chunk_size if chunk_size is None else chunk_size
     k = BEAM_K if k is None else k
     chunks = chunk_candidates(candidates, query, chunk_size)
@@ -132,7 +131,7 @@ async def semantic_shortlist(
 
 
 async def _pick_and_decide(
-    jev: JevClient, query: str, shortlist: Sequence[str], *, instructions: str, fit_instructions: str,
+    jev: JudgeEngine, query: str, shortlist: Sequence[str], *, instructions: str, fit_instructions: str,
     evidence_for: Callable[[list[str]], Awaitable[dict[str, str]]] | None,
     state_extra: dict | None, describe: Callable[[str], str],
     enumerated: Sequence[str], min_fit: float, min_confidence: float, min_margin: float,
@@ -140,7 +139,7 @@ async def _pick_and_decide(
 ) -> NarrowVerdict:
     """Round 2 shared by every path (direct, retrieval shortlist, chunked sweep):
     one Choice over the shortlist plus a fit Noul per entry, then decide()."""
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     if not shortlist:
         return decide(None, {}, 0.0, {}, enumerated, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting)
     evidence = await evidence_for(list(shortlist)) if evidence_for else {}
@@ -154,11 +153,10 @@ async def _pick_and_decide(
     state = {"goal": query, "candidates": criteria, **(state_extra or {})}
     # This ask's call_id travels out on the verdict so the downstream outcome row
     # (open_app/dumpsys/scroll_to_find) joins the decision row that picked what ran.
-    call_id = str(uuid.uuid4())
-    answers = await jev.ask(state, {
+    call_id, answers = await ask(jev, state, {
         "pick": Choice(instructions=instructions, criteria=choice_criteria(criteria, profile)),
         **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source),
-    }, phase="ground", call_id=call_id)
+    }, phase="ground")
     pick = answers["pick"]
     fits = extract_fits(answers, shortlist)
     if is_abstain(pick.choice):
@@ -170,7 +168,7 @@ async def _pick_and_decide(
 
 
 async def narrow_and_pick(
-    jev: JevClient, query: str, candidates: list[str], *, instructions: str, fit_instructions: str,
+    jev: JudgeEngine, query: str, candidates: list[str], *, instructions: str, fit_instructions: str,
     evidence_for: Callable[[list[str]], Awaitable[dict[str, str]]] | None = None,
     chunk_size: int | None = None, k: int | None = None, min_fit: float | None = None,
     min_confidence: float | None = None,
@@ -189,7 +187,7 @@ async def narrow_and_pick(
     profile.shortlist_size gets ONE choice call; the lossless chunked sweep
     runs only when that pick abstains or fails its gates. The hosted engine's
     profile keeps the 2-round chunked sweep unchanged."""
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     # Gate thresholds are the answering engine's profile knobs (budget.py); an
     # explicit argument still wins for callers that need their own bar.
     min_fit = profile.min_fit if min_fit is None else min_fit
