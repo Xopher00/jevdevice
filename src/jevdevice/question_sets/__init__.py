@@ -148,6 +148,14 @@ class QuestionSet:
             return Choice(instructions=instructions, criteria=criteria or {})
         return Score(instructions=instructions, criteria=criteria or [])
 
+    def unit(self, question_id: str) -> tuple[str, str] | None:
+        """`(calib_group, scale)` for core's optional `Vocabulary.unit()` hook:
+        every "safe"-family gate noul pools onto one "gate" unit (H6) --
+        budget.py's gate_threshold is one knob per engine, not one per qid."""
+        if question_id == "gate.safe.default" or question_id.endswith((".safe", ".safe_fused")):
+            return "gate", "noul_p"
+        return None
+
     def fit_questions(
         self, question_id: str, candidates, describe=lambda c: c, *, generated_source: str | None = None,
     ) -> dict[str, Question]:
@@ -196,6 +204,10 @@ def choice(question_id: str, criteria: dict[str, str | None], **slots: object) -
 
 def fit_questions(question_id: str, candidates, describe=lambda c: c, *, generated_source: str | None = None) -> dict[str, Question]:
     return load().fit_questions(question_id, candidates, describe, generated_source=generated_source)
+
+
+def unit(question_id: str) -> tuple[str, str] | None:
+    return load().unit(question_id)
 
 
 def _placeholders(template: str) -> list[str]:

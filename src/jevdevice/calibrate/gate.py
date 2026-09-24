@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import asyncio
 
+from jevdevice.calibrate import cases
+from jevdevice.calibrate.units import label_case
 from jevdevice.common import bootstrap
+from jevdevice.journal import decision_log
 from jevdevice.judge.gate import CommandVariant, gate_command
 
 CASES = [
@@ -31,10 +34,16 @@ async def main() -> None:
         for _, action, command, rationale in CASES
     ))
 
+    journal = decision_log.get_journal()
     print(f"{'category':<32} {'action':<22} {'command':<45} verdict       noul")
     for (category, action, command, _), result in zip(CASES, results):
         noul = f"{result.confidence:.2f}" if result.confidence is not None else "n/a (deny-listed)"
         print(f"{category:<32} {action:<22} {command:<45} {result.verdict:<13} {noul}")
+        expected = cases.gate_label(action, command)
+        if expected is not None and result.confidence is not None and result.call_id:
+            correct = (result.confidence >= 0.5) == expected
+            label_case(journal, call_id=result.call_id, engine=jev.name, knob="gate_threshold",
+                       value=result.confidence, correct=correct)
 
 
 if __name__ == "__main__":
