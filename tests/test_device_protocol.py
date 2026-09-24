@@ -118,8 +118,18 @@ def test_element_role_defaults_to_generic_element() -> None:
 
 # --- T4: METR-shaped phone task family over the frozen goals + journal ----------
 
-def _outcome_row(goal_id: str, verification: str) -> dict:
-    return {"type": "outcome", "goal_id": goal_id, "verification": verification}
+def _journal_rows(tmp_path: Path, goal_id: str, status: str) -> list[dict]:
+    """One outcome row plus its joined verdict row, through a real (tmp)
+    typesymbolic Journal -- the same shape metr_family.verify() replays."""
+    from typesymbolic.domain import ActOutcome, Verdict
+    from typesymbolic.journal import Journal
+
+    journal = Journal(root=tmp_path, rotation="none", background_writes=False)
+    journal.record_outcome(call_id="c1", gate=None,
+                           outcome=ActOutcome(succeeded=status == "verified", key="pick"),
+                           extra={"goal_id": goal_id})
+    journal.record_verdict(call_id="c1", verdict=Verdict(status=status))
+    return list(journal.replay())
 
 
 def test_family_exposes_dev_half_tasks_only() -> None:
@@ -143,14 +153,14 @@ def test_instructions_are_the_frozen_goal_text_and_unknown_tasks_fail_closed() -
         family.add_instructions("nonexistent-task")
 
 
-def test_verify_scores_from_journaled_verified_outcomes() -> None:
+def test_verify_scores_from_journaled_verified_outcomes(tmp_path: Path) -> None:
     import metr_family
 
     family = metr_family.PhoneTaskFamily()
     task = next(iter(family.get_tasks()))
-    verified = [_outcome_row(task, "verified")]
+    verified = _journal_rows(tmp_path / "verified", task, "verified")
     assert family.verify(task, verified) == 1.0
-    assert family.verify(task, [_outcome_row(task, "escalated")]) == 0.0
+    assert family.verify(task, _journal_rows(tmp_path / "escalated", task, "escalated")) == 0.0
     assert family.verify(task, []) == 0.0
     assert metr_family.aggregate_scores([task], verified)[task] == 1.0
 
@@ -161,7 +171,7 @@ async def test_a_metr_task_runs_through_the_runtime_end_to_end(journal_recorder)
     import metr_family
 
     from jevdevice.budget import NONE_OF_THESE
-    from jevdevice.jev import ChoiceAnswer, NoulAnswer
+    from jevdevice.jev import Answer
 
     family = metr_family.PhoneTaskFamily()
     task = next(iter(family.get_tasks()))
@@ -189,26 +199,31 @@ async def test_a_metr_task_runs_through_the_runtime_end_to_end(journal_recorder)
         name = "offline-duck"
 
     async def executor(jev, device, kind, step_goal, **kw):
-        return SimpleNamespace(kind=kind, goal=step_goal, status="verified")
+        from typesymbolic.domain import ActStep
+
+        return ActStep(name=kind, succeeded=True, detail={"goal": step_goal, "status": "verified"})
 
     def kind_pick(kind="tap"):
         return {
-            "kind": ChoiceAnswer(choice=kind, probabilities={kind: 0.9, NONE_OF_THESE: 0.05}, confidence=0.9),
-            "any_fit": NoulAnswer(noul=0.9),
+            "kind": Answer(qid="kind", type="choice", choice=kind,
+                           probabilities={kind: 0.9, NONE_OF_THESE: 0.05}, confidence=0.9),
+            "any_fit": Answer(qid="any_fit", type="noul", noul=0.9),
         }
 
     class ScriptedJudge:
-        engine_name = "jev"
+        name = "jev"
 
         def __init__(self):
             self.payloads = [
-                {"satisfied": NoulAnswer(noul=0.1)},  # not done yet
+                {"satisfied": Answer(qid="satisfied", type="noul", noul=0.1)},  # not done yet
                 kind_pick(),
-                {"satisfied": NoulAnswer(noul=0.95)},  # done
+                {"satisfied": Answer(qid="satisfied", type="noul", noul=0.95)},  # done
             ]
 
-        async def ask(self, state, questions, **kw):
-            return self.payloads.pop(0)
+        async def ask_all(self, state, questions):
+            from typesymbolic.judge import AskResult
+
+            return AskResult(answers=self.payloads.pop(0), model_revision="scripted")
 
     result = await family.run_task(task, ScriptedJudge(), DuckDevice(),
                                    executor=executor, store=_EmptyStore())
@@ -231,7 +246,11 @@ def journal_recorder(monkeypatch):
 
     class LiveJournal:
         def __init__(self) -> None:
+            self.decisions: list[dict] = []
             self.outcomes: list[dict] = []
+
+        def record_decision(self, **row) -> None:
+            self.decisions.append(row)
 
         def record_outcome(self, **row) -> None:
             self.outcomes.append(row)

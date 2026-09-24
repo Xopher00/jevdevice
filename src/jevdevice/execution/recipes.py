@@ -163,7 +163,7 @@ def recipes_from_journal(
     for goal_id, goal_rows in by_goal.items():
         chain = [
             RecipeStep(
-                kind=row["key"], goal=row.get("goal") or goal_text.get(goal_id, ""),
+                kind=row.get("kind"), goal=row.get("goal") or goal_text.get(goal_id, ""),
                 command=row.get("executed_command"),
                 from_node=(row.get("graph_edge") or {}).get("from_node"),
                 to_node=(row.get("graph_edge") or {}).get("to_node"),
@@ -173,7 +173,7 @@ def recipes_from_journal(
             # device-verified steps only: dead ends (failed/escalated/unconfirmed
             # attempts) are the journey, not the chain
             if verdict_status.get(row.get("call_id")) == "verified"
-            and row.get("key")
+            and row.get("kind")
             and (row.get("executed_command") or row.get("graph_edge"))
         ]
         chain = [step for step in _compress(chain) if step.kind]

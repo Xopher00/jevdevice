@@ -79,7 +79,7 @@ def outcome_row(goal: str, *, kind: str | None, verification: str, command: str 
         "type": "outcome", "ts": ts, "call_id": call_id, "goal_id": goal_id_for(goal),
         "goal": goal, "device": "emulator", "executed_command": command,
         "status": None, "recovery_command": None,
-        "graph_edge": edge, "decision": None, "key": kind, "tier": None, "recipe_id": None,
+        "graph_edge": edge, "decision": None, "key": "pick", "kind": kind, "tier": None, "recipe_id": None,
     }
     verdict = {"type": "verdict", "call_id": call_id, "status": verification} if call_id else None
     return outcome, verdict
@@ -166,6 +166,24 @@ def test_builder_skips_goals_without_verified_kind_rows() -> None:
         outcome_row("old rows", kind=None, verification="verified", command="x", ts="t"),
     )
     assert recipes_from_journal(RecordingJournal(rows)) == {}
+
+
+def test_builder_reads_kind_from_extra_not_the_answer_key(monkeypatch, tmp_path) -> None:
+    """Outcome rows now carry the decision's answer key in `key` ("pick") and
+    the action kind in the flat extra `kind` -- the builder must read kind
+    from there, not from `key`."""
+    from typesymbolic.journal import Journal
+
+    from jevdevice.journal import decision_log
+
+    journal = Journal(root=tmp_path, background_writes=False)
+    monkeypatch.setattr(decision_log, "get_journal", lambda: journal)
+    goal = "swipe to unlock"
+    with decision_log.goal_scope(goal):
+        outcomes.record_action(call_id="c1", key="pick", kind="swipe",
+                               response={"status": "ok"}, executed_command="input swipe 0 0 1 1")
+    recipe = recipes_from_journal(journal)[goal_id_for(goal)]
+    assert recipe.steps[0].kind == "swipe"
 
 
 def test_builder_refuses_heldout_goals() -> None:
