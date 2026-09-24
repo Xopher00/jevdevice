@@ -10,7 +10,10 @@ from __future__ import annotations
 import asyncio
 
 from jevdevice.actions.ui import TAP_SAFE_INSTRUCTIONS
+from jevdevice.calibrate import cases
+from jevdevice.calibrate.units import label_case
 from jevdevice.common import bootstrap
+from jevdevice.journal import decision_log
 from jevdevice.judge.gate import DEFAULT_SAFE_INSTRUCTIONS, CommandVariant, gate_command
 
 SEVEN = "text='7' resource-id='com.sec.android.app.popupcalculator:id/calc_keypad_btn_07' content-desc='7'"
@@ -41,11 +44,20 @@ async def main() -> None:
     jev, _ = bootstrap()
     default_results, tap_results = await asyncio.gather(run(jev, DEFAULT_SAFE_INSTRUCTIONS), run(jev, TAP_SAFE_INSTRUCTIONS))
 
+    journal = decision_log.get_journal()
     print(f"{'category':<32} {'command':<45} {'default':<10} tap_specific")
-    for (category, _, command, _), default, tap in zip(CASES, default_results, tap_results):
+    for (category, _, command, bounds), default, tap in zip(CASES, default_results, tap_results):
         d = f"{default.confidence:.2f}" if default.confidence is not None else "n/a"
         t = f"{tap.confidence:.2f}" if tap.confidence is not None else "n/a"
         print(f"{category:<32} {command:<45} {d:<10} {t}")
+        expected = cases.tap_label(command, bounds)
+        if expected is None:
+            continue
+        for result in (default, tap):
+            if result.confidence is not None and result.call_id:
+                correct = (result.confidence >= 0.5) == expected
+                label_case(journal, call_id=result.call_id, engine=jev.name, knob="gate_threshold",
+                           value=result.confidence, correct=correct)
 
 
 if __name__ == "__main__":

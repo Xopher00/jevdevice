@@ -45,14 +45,8 @@ class BudgetProfile:
     abstain_option: bool    # offer "none_of_these" in every choice
     probe_max_chars: int    # raw probe text (dumpsys status) clipped into state, chars
 
-    # Calibration knobs, per engine. The jev profile keeps the historical
-    # values these gates were fit under; the laya profile carries its own
-    # refit (eval/phases/recalibrate_thresholds.py is the fitting harness). A
-    # temperature of None means "not fitted -- too few labeled rows": the fit
-    # floor is MIN_LABELS=20 labels per question type at precision >= 0.95
-    # (the refit harness's MIN_PRECISION); until then the raw scale is
-    # used unchanged. calibration_n records the sample count each fitted value
-    # rests on, so provenance survives config reads.
+    # Calibration knobs: default_thresholds core's current_threshold() uses
+    # (calibrate/units.py) until the journal has enough labels to refit tighter.
     gate_threshold: float          # noul floor that auto-approves a mutating command
     min_confidence: float          # Choice-confidence floor (matching.confidence_gate)
     min_margin: float              # top1-top2 probability margin floor

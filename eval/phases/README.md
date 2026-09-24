@@ -10,7 +10,6 @@ LOGBOOK.md and agent-plans/ use the old names, which map as:
 | smoke_laya.py | phase2_smoke | MCP-surface smoke on the in-process engine |
 | smoke_budget.py | phase3_budget_smoke | budget-profile path smoke (shortlist, sweep fallback) |
 | audit_budget.py | phase3_budget_audit | journal-only state-size audit vs profiles |
-| recalibrate_thresholds.py | phase4_recalibrate | per-question-type quality + threshold refits (journal-only) |
 | perturbations.py | phase4_perturbations | question drift under shuffle/paraphrase/evidence-drop (live) |
 | ab.py | phase5_ab | dev-half A/B worker + scorecard |
 | shadow_agreement.py | phase5_report | shadow vs primary agreement report (journal-only) |

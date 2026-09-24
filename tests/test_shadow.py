@@ -6,11 +6,9 @@ here touches the network or loads the checkpoint."""
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
 
 import pytest
 
-from jevdevice.calibrate.continuous import select_window
 from jevdevice.jev import JevClient, Noul
 from jevdevice.judge import shadow as shadow_mode
 from jevdevice.laya_backend import MODEL, LayaClient
@@ -221,17 +219,3 @@ async def test_aclose_drains_pending_shadow_tasks(monkeypatch) -> None:
     assert shadowed["shadow_of"] == journal.decisions[0]["call_id"]  # drained, not dropped
     assert not [t for t in client.shadow_tasks if not t.done()]
 
-
-# --- the calibration window must never see shadow rows -------------------------
-
-def test_p45_window_excludes_shadow_rows() -> None:
-    now = datetime.now().astimezone()  # tz-aware: row ts are tz-aware isoformat
-    primary = {"type": "decision", "ts": now.isoformat(), "call_id": "p1",
-               "engine": "jev", "phase": "gate", "shadow_of": None}
-    shadowed = {"type": "decision", "ts": now.isoformat(), "call_id": "s1",
-                "engine": "laya", "phase": "gate", "shadow_of": "p1"}
-    stale = {"type": "decision", "ts": (now - timedelta(days=90)).isoformat(),
-             "call_id": "old", "engine": "laya", "phase": "gate", "shadow_of": None}
-    rows, provenance = select_window([primary, shadowed, stale], now=now, window_days=30)
-    assert [r["call_id"] for r in rows] == ["p1"]
-    assert provenance["shadow_rows_excluded"] == 1

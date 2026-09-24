@@ -27,6 +27,7 @@ from typesymbolic.gate import GateResult, GateVerdict
 
 from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
+from jevdevice.calibrate.units import threshold as calibrated_threshold
 from jevdevice.jev import Choice, JudgeEngine, Noul, ask
 from jevdevice.matching import confidence_gate
 
@@ -161,14 +162,14 @@ async def gate_command(
     itself, not another description it has to take on faith like `rationale`.
     `instructions` defaults to the toggle-command wording; a different command
     shape (e.g. a tap) needs its own calibrated wording, not this one reused.
-    `threshold` defaults to the answering engine's profile knob (budget.py):
-    each engine's noul scale is its own, so the approval floor travels with it."""
+    `threshold` defaults to the engine's calibrated "gate" unit (core
+    `current_threshold`, the profile knob until labels accumulate)."""
     if is_read_only(command.command):
         return GateResult(GateVerdict.ACT, "read_only")
     if is_denied(command.command):
         return GateResult(GateVerdict.DENY, "deny_listed")
     profile = current_profile(jev.name)
-    threshold = profile.gate_threshold if threshold is None else threshold
+    threshold = await calibrated_threshold(profile, "gate_threshold") if threshold is None else threshold
 
     # call_id travels onto the GateResult -> Pending -> PendingAction -> outcome
     # row so the two rows join.

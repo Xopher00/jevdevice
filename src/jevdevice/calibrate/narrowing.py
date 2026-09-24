@@ -10,7 +10,10 @@ import asyncio
 
 from jevdevice.actions.app_launch import parse_package_list
 from jevdevice.actions.services import parse_dumpsys_services
+from jevdevice.calibrate import cases
+from jevdevice.calibrate.units import label_case
 from jevdevice.common import bootstrap
+from jevdevice.journal import decision_log
 from jevdevice.judge.narrowing import narrow_and_pick
 
 PACKAGE_CASES = [
@@ -31,16 +34,23 @@ SERVICE_CASES = [
 ]
 
 
-async def run_cases(jev, candidates, cases, *, instructions, fit_instructions):
+async def run_cases(jev, candidates, goal_cases, *, instructions, fit_instructions):
     verdicts = await asyncio.gather(*(
         narrow_and_pick(jev, goal, candidates, instructions=instructions, fit_instructions=fit_instructions)
-        for _, goal in cases
+        for _, goal in goal_cases
     ))
-    for (category, goal), verdict in zip(cases, verdicts):
+    journal = decision_log.get_journal()
+    for (category, goal), verdict in zip(goal_cases, verdicts):
         print(f"{category:<32} {goal!r:<32} ok={verdict.ok!s:<6} choice={verdict.choice} "
               f"confidence={verdict.confidence:.2f} fit={verdict.fit:.2f} best_fit={verdict.best_fit:.2f}")
         if not verdict.ok:
             print(f"{'':<32} {'':<32} reasons: {verdict.reasons}")
+        expected = cases.narrow_correct(goal, verdict.choice)
+        if expected is not None and verdict.call_id:
+            label_case(journal, call_id=verdict.call_id, engine=jev.name, knob="min_confidence",
+                       value=verdict.confidence, correct=expected)
+            label_case(journal, call_id=verdict.call_id, engine=jev.name, knob="min_fit",
+                       value=verdict.fit, correct=expected)
 
 
 async def main() -> None:
