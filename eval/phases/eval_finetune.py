@@ -6,11 +6,9 @@ encoding and configured temperature the runtime sees) and compares:
 
   - decision quality: argmax accuracy vs the verified label, per question type
     and per phase
-  - probability quality: Brier / log-loss / ECE on the noul probability and on
-    the choice probability vector (the calibration recheck -- a fine-tune is
-    a new confidence distribution, so temperatures/thresholds must be refit,
-    never carried over)
-  - temperature recheck: the p^(1/T) refit on choice vectors, old vs new
+  - probability quality: Brier / log-loss / ECE on the noul probability and
+    the choice probability vector, plus a p^(1/T) temperature refit on choice
+    vectors -- a fine-tune is a new confidence distribution, never carried over
 
 The scorecard (JSON) holds both checkpoints' numbers side by side.
 
@@ -26,16 +24,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from collections import defaultdict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-
-import recalibrate_thresholds as p4r  # metric functions (Brier/log-loss/ECE)
+from jevdevice.calibrate import (
+    continuous as p4r,  # metric functions (Brier/log-loss/ECE)
+)
 
 OUT_DIR = REPO / "eval" / "phases" / "finetune_eval"
+
+
+def fit_temperature(vectors: list[tuple[dict[str, float], str]]) -> float | None:
+    """Best T (0.10..3.00) for the p^(1/T) NLL; None if empty (not in
+    jevdevice.calibrate.continuous -- only this scorecard needs it)."""
+    def nll(t: float) -> float:
+        scaled = ({k: p ** (1 / t) for k, p in probs.items()} for probs, _ in vectors)
+        return sum(-math.log(s[c] / sum(s.values())) if c in s and sum(s.values()) > 0 else math.inf
+                   for s, (_, c) in zip(scaled, vectors)) / len(vectors)
+    return min((round(0.05 * i, 2) for i in range(2, 61)), key=nll) if vectors else None
 
 
 def resolve_checkpoint(spec: str, token: str | None) -> Path:
@@ -94,13 +104,12 @@ def noul_report(pairs: list[tuple[float, bool]]) -> dict:
         return {"n": 0}
     probabilities = [p for p, _ in pairs]
     labels = [y for _, y in pairs]
-    error, _table = p4r.ece(probabilities, labels)
     return {
         "n": len(labels),
         "accuracy@0.5": sum(1 for p, y in zip(probabilities, labels) if (p >= 0.5) == y) / len(labels),
         "brier": p4r.brier(probabilities, labels),
         "logloss": p4r.logloss(probabilities, labels),
-        "ece": error,
+        "ece": p4r.ece(probabilities, labels),
         "n_true": sum(labels),
     }
 
@@ -110,29 +119,20 @@ def choice_report(rows: list[dict]) -> dict:
         return {"n": 0}
     correct_flags = [r["correct"] for r in rows]
     confidences = [r["confidence"] for r in rows]
-    fitted = p4r.fit_temperature(_vectors_with_names(rows))
-    error, _table = p4r.ece(confidences, correct_flags)
     return {
         "n": len(rows),
         "pick_accuracy": sum(correct_flags) / len(rows),
         "confidence_brier": p4r.brier(confidences, correct_flags),
         "confidence_logloss": p4r.logloss(confidences, correct_flags),
-        "confidence_ece": error,
-        "temperature_refit": fitted,
+        "confidence_ece": p4r.ece(confidences, correct_flags),
+        "temperature_refit": fit_temperature(_vectors_with_names(rows)),
     }
 
 
 def _vectors_with_names(rows: list[dict]) -> list[tuple[dict, str]]:
-    """(probabilities, correct option name) pairs; rows whose label is missing
-    the option are skipped (the same rule the exporter applies)."""
-    out = []
-    for row in rows:
-        pick_name = row.get("correct_pick")
-        if pick_name is None:
-            continue
-        if pick_name in row["probabilities"]:
-            out.append((row["probabilities"], pick_name))
-    return out
+    """(probabilities, correct option) pairs; label-missing rows skipped."""
+    return [(r["probabilities"], r["correct_pick"]) for r in rows
+            if r.get("correct_pick") in (r.get("probabilities") or {})]
 
 
 def main() -> int:

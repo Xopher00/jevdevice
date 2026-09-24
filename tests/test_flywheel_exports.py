@@ -6,6 +6,7 @@ enforces them."""
 from __future__ import annotations
 
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,8 +19,11 @@ if str(PHASES) not in sys.path:
 import export_flywheel as p7e
 import mine_recoveries as p7m
 import perturbation_harness as p7h
+from typesymbolic.domain import ActOutcome, Verdict
+from typesymbolic.journal import Journal
+from typesymbolic.question import Answer
 
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import goal_id_for
 
 # --- perturbation plan ------------------------------------------------
 
@@ -70,25 +74,40 @@ def test_plan_includes_pre_broken_and_start_state_variants() -> None:
         assert run["source_goal_id"] not in run["setup_ids"]
 
 
+# --- real-journal plumbing (typesymbolic core rows, no wrapper) --------
+
+def _journal(tmp_path: Path) -> Journal:
+    """A tmp core Journal with a strictly-increasing clock (no ts ties)."""
+    ticks = iter(range(1, 10_000))
+    return Journal(root=tmp_path, background_writes=False,
+                   clock=lambda: datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=next(ticks)))
+
+
+def _decision(journal: Journal, call_id: str, goal: str, phase: str, *, choice: bool) -> None:
+    """A primary decision row: kind pick (Choice) + fit chatter, or a bare verify Noul."""
+    scope = {"goal": goal, "goal_id": goal_id_for(goal), "shadow_of": None}
+    answers = ({"kind": Answer.from_choice("kind", "toggle_service", {"toggle_service": 0.9, "abstain": 0.1}),
+                "any_fit": Answer.from_noul("any_fit", 0.8)}
+               if choice else {"satisfied": Answer.from_noul("satisfied", 0.7)})
+    journal.record_decision(call_id=call_id, engine="jev", phase=phase, scope=scope, answers=answers)
+
+
+def _outcome(journal: Journal, call_id: str, goal: str, *, executed_command: str | None = None,
+            status: str | None = None, act_reasons: tuple[str, ...] = ()) -> None:
+    outcome = ActOutcome(succeeded=status == "ok", reasons=act_reasons)
+    raw = {"goal": goal, "goal_id": goal_id_for(goal), "executed_command": executed_command, "status": status}
+    extra = {k: v for k, v in raw.items() if v is not None}
+    journal.record_outcome(call_id=call_id, gate=None, outcome=outcome, extra=extra or None)
+
+
 # --- trajectory extraction (report core) ------------------------------------------
 
-def _journal_with_run(tmp_path: Path, goal: str, *, verified: bool) -> DecisionJournal:
-    journal = DecisionJournal(tmp_path)
-    journal.record_decision(call_id="c1", engine="jev", model_revision="m", phase="kind",
-                            state={"goal": goal}, questions={}, answers={},
-                            goal=goal, goal_id=DecisionJournal.goal_id_for(goal)
-                            if hasattr(DecisionJournal, "goal_id_for") else None)
-    journal.record_outcome(call_id="c1", executed_command="svc bluetooth enable",
-                           verification="verified" if verified else "escalated",
-                           goal=goal)
-    return journal
-
-
 def test_extract_trajectories_windows_rows_and_scores_verification(tmp_path: Path) -> None:
-    from jevdevice.journal.decision_log import goal_id_for
-
     goal = "Turn Bluetooth on."
-    journal = _journal_with_run(tmp_path, goal, verified=True)
+    journal = _journal(tmp_path)
+    _decision(journal, "c1", goal, "kind", choice=True)
+    _outcome(journal, "c1", goal, executed_command="svc bluetooth enable", status="ok")
+    journal.record_verdict(call_id="c1", verdict=Verdict(status="verified"))
     runs = [{"run_id": "pa04-baseline", "goal_id": goal_id_for(goal), "goal": goal,
              "source_goal_id": "pa04", "variant_id": "baseline", "mutation_id": "as_is",
              "start_state": "home", "setup_ids": [], "status": "ok",
@@ -108,18 +127,13 @@ def test_extract_trajectories_windows_rows_and_scores_verification(tmp_path: Pat
 # --- failure mining: failure mining --------------------------------------------------------
 
 def _mine_journal(tmp_path: Path, goal: str) -> tuple[list[dict], dict]:
-    from jevdevice.journal.decision_log import goal_id_for
-
-    journal = DecisionJournal(tmp_path)
-    goal_id = goal_id_for(goal)
-    journal.record_decision(call_id="fail-decision", engine="jev", model_revision="m", phase="kind",
-                            state={"goal": goal}, questions={}, answers={}, goal=goal, goal_id=goal_id)
-    journal.record_outcome(call_id="fail-decision", verification="escalated", status="escalated",
-                           goal=goal, goal_id=goal_id)
-    journal.record_decision(call_id="retry-decision", engine="jev", model_revision="m", phase="fill",
-                            state={"goal": goal}, questions={}, answers={}, goal=goal, goal_id=goal_id)
-    journal.record_outcome(call_id="retry-decision", executed_command="svc bluetooth enable",
-                           verification="verified", goal=goal, goal_id=goal_id)
+    journal = _journal(tmp_path)
+    _decision(journal, "fail-decision", goal, "kind", choice=True)
+    _outcome(journal, "fail-decision", goal, status="escalated")
+    journal.record_verdict(call_id="fail-decision", verdict=Verdict(status="escalated"))
+    _decision(journal, "retry-decision", goal, "fill", choice=True)
+    _outcome(journal, "retry-decision", goal, executed_command="svc bluetooth enable", status="ok")
+    journal.record_verdict(call_id="retry-decision", verdict=Verdict(status="verified"))
     return p7m.collect(journal)
 
 
@@ -138,13 +152,14 @@ def test_mining_pairs_a_failure_with_its_later_recovery(tmp_path: Path) -> None:
 
 
 def test_mining_skips_unrecovered_failures_and_heldout(tmp_path: Path) -> None:
-    journal = DecisionJournal(tmp_path)
+    journal = _journal(tmp_path)
     # escalation with NO later verified outcome for the same goal -> no pair
-    journal.record_outcome(call_id="only-failure", verification="escalated",
-                           goal="Open the Camera app.", goal_id="g-camera")
+    _outcome(journal, "only-failure", "Open the Camera app.", status="escalated")
+    journal.record_verdict(call_id="only-failure", verdict=Verdict(status="escalated"))
     # a held-out goal text is hard-skipped, never exported
     heldout = next(iter(p7m.heldout_goals()))
-    journal.record_outcome(call_id="h", verification="escalated", goal=heldout.title(), goal_id="h1")
+    _outcome(journal, "h", heldout.title(), status="escalated")
+    journal.record_verdict(call_id="h", verdict=Verdict(status="escalated"))
     pairs, dropped = p7m.collect(journal)
     assert pairs == []
     assert dropped["heldout_goal"] == 1
@@ -152,62 +167,54 @@ def test_mining_skips_unrecovered_failures_and_heldout(tmp_path: Path) -> None:
 
 # --- exporters: exporters -------------------------------------------------------------
 
-def _rows_for_export(tmp_path: Path, goal: str) -> dict[str, list[dict]]:
+def _rows_for_export(tmp_path: Path, goal: str) -> list[dict]:
     """A minimal journaled trajectory: kind decision -> outcome -> recovery."""
-    def decision_row(call_id, phase, ts, choice=None):
-        return {"type": "decision", "ts": ts, "call_id": call_id, "goal_id": "gid", "goal": goal,
-                "phase": phase, "engine": "jev", "shadow_of": None,
-                "answers": ({"kind": {"type": "choice", "choice": "toggle_service", "confidence": 0.9},
-                             "any_fit": {"type": "noul", "noul": 0.8}}
-                            if choice else {"satisfied": {"type": "noul", "noul": 0.7}}),
-                "reasons": [] if choice else ["verify noul low"]}
-    return {
-        "gid": [
-            decision_row("d1", "kind", "2026-09-21T02:00:00", choice=True),
-            {"type": "outcome", "ts": "2026-09-21T02:00:01", "call_id": "d1", "goal_id": "gid",
-             "goal": goal, "verification": "escalated", "status": "escalated", "reasons": ["gate"]},
-            decision_row("d2", "fill", "2026-09-21T02:00:02", choice=True),
-            {"type": "outcome", "ts": "2026-09-21T02:00:03", "call_id": "d2", "goal_id": "gid",
-             "goal": goal, "verification": "verified", "executed_command": "svc bluetooth enable"},
-        ]
-    }
+    journal = _journal(tmp_path)
+    _decision(journal, "d1", goal, "kind", choice=True)
+    _outcome(journal, "d1", goal, status="escalated", act_reasons=("gate",))
+    _decision(journal, "d2", goal, "fill", choice=True)
+    _outcome(journal, "d2", goal, executed_command="svc bluetooth enable", status="ok")
+    return [r for r in journal.replay() if r.get("type") in ("decision", "outcome")]
+
+
+def _row(rows: list[dict], call_id: str, row_type: str) -> dict:
+    return next(r for r in rows if r.get("call_id") == call_id and r.get("type") == row_type)
 
 
 def test_span_weighted_exporter_weights_actions_over_chatter(tmp_path: Path) -> None:
-    rows = _rows_for_export(tmp_path, "Turn Bluetooth on.")["gid"]
-    row = p7e.span_weighted_row("gid", rows, "Turn Bluetooth on.")
+    rows = _rows_for_export(tmp_path, "Turn Bluetooth on.")
+    verdicts = {"d2": "verified"}
+    row = p7e.span_weighted_row("gid", rows, "Turn Bluetooth on.", verdicts)
     assert row is not None and row["format"] == "span-weighted-v1"
     roles = [s["role"] for s in row["spans"]]
     assert "action" in roles and "decision" in roles and "chatter" in roles
     weights = {s["role"]: s["weight"] for s in row["spans"]}
     assert weights["action"] == p7e.WEIGHT_ACTION == 1.0
     assert weights["chatter"] < weights["action"]  # chatter is discounted, never dropped
-    # an unverified trajectory exports nothing
-    unverified = [r for r in rows if r.get("verification") != "verified" or r.get("type") == "decision"]
-    assert p7e.span_weighted_row("gid2", unverified, "g") is None
+    # an unverified trajectory (its verified outcome dropped) exports nothing
+    unverified = [r for r in rows if r.get("call_id") != "d2" or r.get("type") != "outcome"]
+    assert p7e.span_weighted_row("gid2", unverified, "g", verdicts) is None
 
 
 def test_sgcd_row_puts_loss_on_the_recovery_side_only(tmp_path: Path) -> None:
     goal = "Turn Bluetooth off."
-    rows = _rows_for_export(tmp_path, goal)["gid"]
+    rows = _rows_for_export(tmp_path, goal)
     pair = {
         "goal_id": "gid", "goal": goal, "provenance": "retry",
-        "broken": {"ts": "2026-09-21T02:00:01", "call_id": "d1", "status": "escalated",
-                   "reasons": ["gate"], "attempted_command": None,
-                   "failed_trajectory_call_ids": ["d1"]},
-        "recovery": {"ts": "2026-09-21T02:00:03", "call_id": "d2",
+        "broken": {"ts": _row(rows, "d1", "outcome")["ts"], "call_id": "d1", "status": "escalated",
+                   "reasons": ["gate"], "attempted_command": None, "failed_trajectory_call_ids": ["d1"]},
+        "recovery": {"ts": _row(rows, "d2", "outcome")["ts"], "call_id": "d2",
                      "executed_command": "svc bluetooth disable", "recovery_command": None,
                      "recovery_decision_call_ids": ["d2"], "device": "s"},
     }
-    # sgcd_row re-reads the journal by goal_id; point it at the synthetic rows.
-    import pytest as _pytest
-
-    with _pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(p7e.p7m, "trajectories_by_goal", lambda journal: {"gid": rows})
+    # point both the singleton journal and trajectories_by_goal at the synthetic
+    # rows so no real ~/.jevdevice journal is ever touched.
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(p7e.decision_log, "get_journal", lambda: _journal(tmp_path))
+        monkeypatch.setattr(p7e.p7m, "trajectories_by_goal", lambda journal_rows: {"gid": rows})
         sgcd = p7e.sgcd_row(pair)
     assert sgcd["format"] == "sgcd-v1"
-    # the broken prefix is context (kept, with the failure outcome's call_id),
-    # and the target carries ONLY the recovery side's action/decision spans.
+    # broken prefix is context; target carries ONLY the recovery side's spans.
     assert sgcd["context"]["broken_state"]["call_id"] == "d1"
     assert {s["role"] for s in sgcd["target"]} == {"action", "decision"}
     assert all(s["call_id"] != "d1" for s in sgcd["target"])

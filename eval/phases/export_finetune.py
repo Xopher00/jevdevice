@@ -14,7 +14,7 @@ Supervision labels (one of):
 Ground-truth sources (all dev-half derived; the heldout half of eval/goals.yaml
 is asserted absent from every exported row):
   1. dev_tap        -- the calibrate-CLI case tables (mirrored by
-                       eval/phases/recalibrate_thresholds.py; hand-labeled dev taps).
+                       jevdevice.calibrate.continuous; hand-labeled dev taps).
   2. live_verified  -- decision rows joined by call_id to a device-verified
                        outcome row whose executed_command == proposed_command.
   3. narrow_cases   -- round-1 sweep rows for goals whose correct candidate is
@@ -209,7 +209,7 @@ def example_for(
         provenance = "narrow_cases" if supervision else None
     if not supervision:
         return None
-    questions = row.get("questions") or {}
+    questions = row.get("asked") or {}
     supervision = {key: label for key, label in supervision.items() if key in questions}
     if not supervision:
         return None
@@ -282,7 +282,7 @@ def spot_check(journal, examples: list[dict]) -> int:
         row = rows.get((example["journal_file"], example["call_id"]))
         assert row is not None, f"spot-check: row {example['call_id']} not found in {example['journal_file']}"
         assert row.get("state") == example["state"], f"spot-check state drift on {example['call_id']}"
-        assert row.get("questions") == example["questions"], f"spot-check question drift on {example['call_id']}"
+        assert row.get("asked") == example["questions"], f"spot-check question drift on {example['call_id']}"
         rederived = example_for(row, example["journal_file"], {}, {})
         assert rederived is not None, f"spot-check: {example['call_id']} no longer exports"
         assert rederived["supervision"] == example["supervision"], f"spot-check supervision drift on {example['call_id']}"
@@ -313,7 +313,7 @@ def collect(journal, exclude_goal_ids: frozenset[str] = frozenset()) -> tuple[li
             dropped["error_or_no_answers"] += 1
             continue
         state = row.get("state") or {}
-        goal = state.get("goal") if isinstance(state, dict) else None
+        goal = scope.get("goal") or (state.get("goal") if isinstance(state, dict) else None)
         if goal and goal.casefold() in _heldout_casefold():
             # Fail-closed on contamination -- unless the operator explicitly
             # excluded this goal id (stray pre-guard rows, card-recorded), the
