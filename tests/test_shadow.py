@@ -1,23 +1,13 @@
 """Shadow mode: while the primary engine answers live traffic, a second
 engine observes the exact same (state, questions) and journals its answers --
-and nothing else. Ported off the removed `JevClient` onto the current
-`jev.ask()` + `judge/shadow.py` wrapper: a primary `JevEngine` (over
-`httpx2.MockTransport`, as test_journal_behaviour.py does) with a `.shadow`/
-`.shadow_tasks` pair hung on it by plain attribute assignment (attach()'s own
-contract), and `jev.ask()` itself schedules/drains -- no client class remains.
-The primary and its shadow both write through the shared
-`decision_log.get_journal()` singleton (no per-client journal), so every
-test monkeypatches it once and reads both rows off it.
-
-Old -> new mapping: `JevClient("test-key", journal=...)` -> `JevEngine(api_key=
-"test-key", transport=httpx2.MockTransport(handler))`, journal monkeypatched
-onto `decision_log._default_journal` (like every other ported ask() test);
-`client.ask(state, questions, phase=...)` -> `await ask(engine, state,
-questions, phase=...)`; `client.shadow`/`client.shadow_tasks` -> unchanged
-attribute names, set directly instead of via a JevClient constructor;
-`client.aclose()` -> `shadow_mode.drain(engine)`; the old flat `row["shadow_of"]`
--> `row["scope"]["shadow_of"]` (shadow_of rides `scope`, per jev.ask()).
-Every original assertion is kept."""
+and nothing else. A primary `JevEngine` (over `httpx2.MockTransport`, as
+test_journal_behaviour.py does) carries a `.shadow`/`.shadow_tasks` pair hung
+on it by plain attribute assignment (`judge/shadow.py`'s `attach()`
+contract); `jev.ask()` itself schedules and drains the shadow re-ask -- no
+separate client class is involved. The primary and its shadow both write
+through the shared `decision_log.get_journal()` singleton (no per-client
+journal), so every test monkeypatches it once and reads both rows off it.
+`shadow_of` rides the decision row's `scope` field, per `jev.ask()`."""
 
 from __future__ import annotations
 

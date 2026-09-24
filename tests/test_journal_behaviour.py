@@ -1,11 +1,8 @@
-"""Regression spec, ported onto core (typesymbolic) transport + journal for
-2b2: JevEngine over httpx2.MockTransport instead of a fake httpx.AsyncClient,
-decision_log._default_journal monkeypatched instead of a DecisionJournal
-instance, row field names updated to core's (answers/scope/asked/state/extra/
-error/elapsed_ms). The first 6 tests below are the ported ask()/journal spec
-(da4e4a3's tests/test_decision_log.py via aa1d9ee's verbatim copy); the last 4
-still exercise decision_log.NONE/VERIFIED-era outcome helpers that aren't
-migrated yet and are left for agent 2c, unmodified."""
+"""Regression spec for `jev.ask()` and `journal.outcomes`: journaled decision
+rows over a `JevEngine` on `httpx2.MockTransport`, with
+`decision_log._default_journal` monkeypatched to a test double. Row field
+names follow typesymbolic's own (answers/scope/asked/state/extra/error/
+elapsed_ms)."""
 
 from __future__ import annotations
 

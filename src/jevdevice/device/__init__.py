@@ -2,9 +2,8 @@
 engine types against, and one module per family holds its implementation
 (`adb.py` -- the Android phone; `cli.py` -- the local shell).
 
-Everything the old single-file `device.py` exported is re-exported here, so
-engine modules, tests, and eval tooling keep their existing
-`from jevdevice.device import ...` imports unchanged.
+Every family type is re-exported here, so engine modules, tests, and eval
+tooling import them uniformly as `from jevdevice.device import ...`.
 
 Adding a family means adding a module -- the engine is untouched.
 """

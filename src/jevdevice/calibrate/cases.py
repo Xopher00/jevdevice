@@ -1,6 +1,5 @@
 """Single source of the dev-case ground truth the calibrate CLIs (gate.py,
-gate_taps.py, narrowing.py) run against the judge and label -- previously
-duplicated between calibrate/continuous.py and eval/phases/recalibrate_thresholds.py.
+gate_taps.py, narrowing.py) run against the judge and label.
 """
 
 from __future__ import annotations

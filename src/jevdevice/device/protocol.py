@@ -14,7 +14,7 @@ implementation was the test of this interface):
   commands, and no separate probe path exists to generalize.
 - capture   -> `run_binary(command)`: raw stdout bytes (screencap -p).
 - geometry  -> `window_size()`: swipe endpoints (ui.propose_swipe).
-- name      -> the journal's per-device `device` column (outcomes.emit_outcome),
+- name      -> the journal's per-device `device` column (outcomes.record_action),
   so a second device family separates its rows without engine changes.
 
 Roadmap sketch names with NO current call site are deliberately absent and must

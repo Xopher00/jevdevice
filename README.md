@@ -119,7 +119,7 @@ only ever **tighten** them (loosening requires recorded human sign-off).
 ## The decision journal
 
 Everything is journaled, append-only, outside the repo
-(`~/.jevdevice/journal/`):
+(`~/.jevdevice/tsjournal/` by default; `JEV_JOURNAL_DIR` overrides):
 
 - **decision rows** — every judge ask: the full state, the questions, the
   answers, usage, latency, engine + checkpoint revision;
@@ -210,10 +210,10 @@ uv run python eval/phases/cli_family.py run                # dev goals, local sh
 
 ## Tests
 
-`uv run pytest` runs ~190 offline tests (pure functions, scripted judges,
-recorded journals — no device, no network). `tests/test_mcp_approval_flow.py`
-is the one live integration test: it needs a connected phone and a real API
-key. `uv run ruff check` keeps the code lint-clean.
+`uv run pytest --deselect tests/test_mcp_approval_flow.py` runs 191 offline
+tests (pure functions, scripted judges, recorded journals — no device, no
+network). That one test is the live integration test: it needs a connected
+phone and a real API key. `uv run ruff check` keeps the code lint-clean.
 
 ## Why this design (the short version)
 
