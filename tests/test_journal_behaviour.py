@@ -139,6 +139,25 @@ async def test_call_id_is_generated_once_per_ask_when_not_supplied(monkeypatch) 
     assert row_ids == [first, second]  # the journaled rows carry the ids ask() returned
 
 
+async def test_primary_ask_then_device_verdict_labels_the_pooled_unit(tmp_path: Path, monkeypatch) -> None:
+    """End to end (2e): a compiled-question primary ask carries a QuestionRef
+    (jev.py's `_refs_for`), and a device-verified outcome on its answer key
+    (journal/outcomes.record_action, the "tests = pick key" verdict) joins
+    into the live LabelIndex -- the loop 2d found open, closed."""
+    from jevdevice import question_sets
+    from jevdevice.journal import outcomes
+
+    journal = Journal(root=tmp_path, background_writes=False)
+    monkeypatch.setattr(decision_log, "_default_journal", journal)
+    engine = _engine(lambda request: _ok_response())
+    question = question_sets.load().noul("tap.safe")  # ".safe" suffix -> 2d's pooled "gate" unit
+    call_id, _ = await ask(engine, {"goal": "g"}, {"q1": question}, phase="gate")
+
+    outcomes.record_action(call_id=call_id, key="q1", response={"status": "ok"})
+
+    assert journal.labeled_pairs("gate", "noul_p", engine="jev", any_revision=True) == [(0.9, True)]
+
+
 # --- every ask() call site carries a phase label -----------------------------
 
 def test_every_ask_call_site_carries_a_phase_label() -> None:

@@ -43,6 +43,29 @@ class CompiledQuestionError(RuntimeError):
     falls back to improvising a question."""
 
 
+class _Tagged:
+    """qid/vocab_version off-wire (GeneratedNoul's Field(exclude=True) convention)."""
+
+    qid: str = Field(default="", exclude=True)
+    vocab_version: str = Field(default="", exclude=True)
+
+
+class TaggedNoul(_Tagged, Noul):
+    pass
+
+
+class TaggedChoice(_Tagged, Choice):
+    pass
+
+
+class TaggedScore(_Tagged, Score):
+    pass
+
+
+def _tag(cls: type, question_id: str, version: str, **fields: object) -> Question:
+    return cls(qid=question_id, vocab_version=version, **fields)
+
+
 class GeneratedNoul(Noul):
     """A runtime-generated (escape-hatch) Noul. Carries its provenance on
     excluded fields so the wire body is byte-identical to a plain Noul, but
@@ -121,13 +144,13 @@ class QuestionSet:
         return self._slots(question_id, slots)
 
     def noul(self, question_id: str, **slots: object) -> Noul:
-        return Noul(instructions=self.text(question_id, **slots))
+        return _tag(TaggedNoul, question_id, self.version, instructions=self.text(question_id, **slots))
 
     def choice(self, question_id: str, criteria: dict[str, str | None], **slots: object) -> Choice:
-        return Choice(instructions=self.text(question_id, **slots), criteria=criteria)
+        return _tag(TaggedChoice, question_id, self.version, instructions=self.text(question_id, **slots), criteria=criteria)
 
     def score(self, question_id: str, criteria: list[str], **slots: object) -> Score:
-        return Score(instructions=self.text(question_id, **slots), criteria=criteria)
+        return _tag(TaggedScore, question_id, self.version, instructions=self.text(question_id, **slots), criteria=criteria)
 
     def ask(self, question_id: str, **slots: object) -> Question:
         """The typesymbolic `vocab.Vocabulary` protocol surface: one frozen-worded
@@ -143,10 +166,10 @@ class QuestionSet:
         instructions = self.text(question_id, **slots)
         entry_type = self.template(question_id)["type"]
         if entry_type == "noul":
-            return Noul(instructions=instructions)
+            return _tag(TaggedNoul, question_id, self.version, instructions=instructions)
         if entry_type == "choice":
-            return Choice(instructions=instructions, criteria=criteria or {})
-        return Score(instructions=instructions, criteria=criteria or [])
+            return _tag(TaggedChoice, question_id, self.version, instructions=instructions, criteria=criteria or {})
+        return _tag(TaggedScore, question_id, self.version, instructions=instructions, criteria=criteria or [])
 
     def unit(self, question_id: str) -> tuple[str, str] | None:
         """`(calib_group, scale)` for core's optional `Vocabulary.unit()` hook:
