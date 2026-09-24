@@ -129,6 +129,8 @@ async def test_call_id_is_generated_once_per_ask_when_not_supplied(monkeypatch) 
     first, _ = await ask(engine, {"g": 1}, {"q1": Noul(instructions="i")})
     second, _ = await ask(engine, {"g": 2}, {"q1": Noul(instructions="i")})
     assert first != second
+    row_ids = [row["call_id"] for row in recorder.decisions]
+    assert row_ids == [first, second]  # the journaled rows carry the ids ask() returned
 
 
 # --- every ask() call site carries a phase label -----------------------------

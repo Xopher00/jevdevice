@@ -16,24 +16,19 @@ Knobs (named, env-selected, read at use time so tests can flip them):
 - JEV_SHADOW        "1" (default) = attach a laya shadow when the primary
                     engine is jev; "0" disables. The shadow checkpoint loads
                     lazily on the first shadowed ask.
-- JEV_SHADOW_MODE   "after" (default) or "concurrent": validated, read by
-                    calibrate/ tooling that reports on it. Core's `ask_batch`
-                    doesn't hand out a call_id until the primary request is
-                    done, so -- unlike the pre-migration hand-rolled client --
-                    the shadow's own re-ask can only start once shadow_of is
-                    known; both modes schedule it there. Kept as a distinct,
-                    validated knob rather than silently dropped: a future
-                    core hook to observe a call_id pre-request would let
-                    "concurrent" resume actually overlapping the primary.
+- JEV_SHADOW_MODE   "after" (default) = spawn the shadow ask only after the
+                    primary's answer and row are final (zero contention with
+                    the in-flight primary call); "concurrent" = spawn it
+                    alongside the primary request.
 - SHADOW_DRAIN_TIMEOUT_S  aclose() grace for in-flight shadow asks before the
                     remainder are cancelled.
 
 Lifecycle: common.bootstrap() calls attach() on the jev branch, hanging a
 `.shadow` JudgeEngine and a `.shadow_tasks` set off the primary judge (plain
-attribute assignment -- JevEngine carries no __slots__). jev.ask() calls
-schedule() once the primary's call_id is known; aclose() drains. Everything
-else -- every ask() call site -- inherits shadowing unchanged, because they
-all go through jev.ask().
+attribute assignment -- JevEngine carries no __slots__). jev.ask() generates
+its call_id up front and calls schedule() at two points (before_request /
+after_answer); aclose() drains. Everything else -- every ask() call site --
+inherits shadowing unchanged, because they all go through jev.ask().
 """
 
 from __future__ import annotations
@@ -86,13 +81,16 @@ def attach(primary) -> None:
     primary.shadow_tasks = set()
 
 
-def schedule(primary, *, primary_call_id: str, state: object,
+def schedule(primary, *, point: str, primary_call_id: str, state: object,
              questions: dict, phase: str | None, truncation: dict | None) -> None:
-    """Spawn this ask()'s shadow observation, once the primary's call_id
-    exists (see the module docstring's JEV_SHADOW_MODE note)."""
+    """Spawn this ask()'s shadow observation, if the mode wants this point.
+    point='before_request' acts only in concurrent mode (shadow starts
+    alongside the primary request); point='after_answer' acts only in after
+    mode (shadow starts once the primary answer and row are final)."""
     if getattr(primary, "shadow", None) is None:
         return
-    mode()  # still validated even though both modes schedule at the same point
+    if (point == "before_request") != (mode() == "concurrent"):
+        return
     task = asyncio.get_running_loop().create_task(_observe(
         primary.shadow, primary_call_id=primary_call_id, state=state,
         questions=questions, phase=phase, truncation=truncation,
