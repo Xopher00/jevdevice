@@ -212,6 +212,12 @@ class RecordingJournal:
     def record_verdict(self, **row) -> None:
         self.verdicts.append(row)
 
+    def flush(self) -> None:
+        pass
+
+    def labeled_pairs(self, *args, **kwargs) -> list:
+        return []
+
 
 @pytest.fixture()
 def outcome_journal(monkeypatch):

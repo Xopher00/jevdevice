@@ -24,6 +24,7 @@ from jevdevice.execution.recipes import (
     similarity,
     verify_recipe,
 )
+from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import goal_id_for
 from jevdevice.judge.gate import CommandVariant, GateResult
 
@@ -211,12 +212,34 @@ async def test_tier0_recipe_hit_resolves(journal_recorder, tmp_path) -> None:
 
     async def executor(jev, transport, kind, step_goal, **kw):
         ran.append((kind, step_goal))
-        return planner.StepResult(kind, step_goal, "verified")
+        return planner._step(kind, step_goal, "verified")
 
     result = await planner.resolve(FakeJudge([]), None, goal, executor=executor, store=store)
     assert result.tier == 0 and result.status == "resolved"
     assert ran == [("open_app", goal), ("tap", goal)]
     assert [r["tier"] for r in journal_recorder.outcomes if r["status"] == "planner_resolved"] == [0]
+
+
+async def test_multi_step_run_shares_one_episode_id(journal_recorder, tmp_path) -> None:
+    """A multi-step planner run journals every executed command plus its own
+    tier row under one episode_id -- the whole run is one core Episode."""
+    goal = "open the camera app"
+    recipe = _recipe(goal, [
+        RecipeStep("open_app", goal, "monkey -p com.camera 1", "home", "com.camera", "c1"),
+        RecipeStep("tap", goal, "input tap 5 700", "com.camera", "com.camera", "c2"),
+    ])
+    store = RecipeStore(tmp_path)
+    store.upsert(recipe)
+
+    async def executor(jev, transport, kind, step_goal, *, episode_id=None, **kw):
+        outcomes.record_action(call_id=f"cid-{kind}", key=kind, response={"status": "ok"}, episode_id=episode_id)
+        return planner._step(kind, step_goal, "verified")
+
+    await planner.resolve(FakeJudge([]), None, goal, executor=executor, store=store)
+    episode_ids = {r["episode_id"] for r in journal_recorder.outcomes}
+    assert len(episode_ids) == 1 and next(iter(episode_ids))
+    executed_rows = [r for r in journal_recorder.outcomes if r.get("key") in ("open_app", "tap")]
+    assert len(executed_rows) == 2  # one row per executed command
 
 
 # --- tier 1: bounded adapt (drop-only) ----------------------------------------------
@@ -236,8 +259,8 @@ async def test_tier1_adapts_by_dropping_the_stale_step(journal_recorder, tmp_pat
         ran.append(kind)
         # tier 0: the tap fails on the current screen; tier 1: everything it runs verifies
         if kind == "tap" and kw.get("tier") == 0:
-            return planner.StepResult(kind, step_goal, "escalated")
-        return planner.StepResult(kind, step_goal, "verified")
+            return planner._step(kind, step_goal, "escalated")
+        return planner._step(kind, step_goal, "verified")
 
     judge = FakeJudge([
         {"fits": Answer.from_noul(qid="", noul=0.9)},   # tap still fits -> re-run it
@@ -246,7 +269,7 @@ async def test_tier1_adapts_by_dropping_the_stale_step(journal_recorder, tmp_pat
     result = await planner.resolve(judge, DumpTransport(), goal, executor=executor, store=store)
     assert result.tier == 1 and result.status == "resolved"
     assert ran == ["open_app", "tap", "tap"]  # tier 1 resumes from the failed step
-    assert [s.kind for s in result.steps if s.status == "skipped"] == ["toggle_service"]
+    assert [s.name for s in result.steps if s.detail.get("status") == "skipped"] == ["toggle_service"]
     statuses = [r["status"] for r in journal_recorder.outcomes]
     assert "planner_fallthrough" in statuses and "planner_resolved" in statuses
 
@@ -287,7 +310,7 @@ async def test_tier2_stepwise_selection_resolves(journal_recorder, tmp_path) -> 
 
     async def executor(jev, transport, kind, step_goal, **kw):
         ran.append(kind)
-        return planner.StepResult(kind, step_goal, "verified")
+        return planner._step(kind, step_goal, "verified")
 
     # not done -> pick tap (closed vocabulary) -> done.
     judge = FakeJudge([
@@ -312,7 +335,7 @@ async def test_tier2_verified_read_resolves_without_a_screen_change(journal_reco
 
     async def executor(jev, transport, kind, step_goal, **kw):
         ran.append(kind)
-        return planner.StepResult(kind, step_goal, "verified")
+        return planner._step(kind, step_goal, "verified")
 
     # not done on screen -> pick dumpsys -> the read verifies: NO further
     # satisfied ask may run (FakeJudge pops on empty would IndexError).
@@ -325,7 +348,7 @@ async def test_tier2_verified_read_resolves_without_a_screen_change(journal_reco
     assert result.tier == 2 and result.status == "resolved"
     assert ran == ["dumpsys"]  # exactly once -- not twelve times
     assert len(judge.payloads) == 0  # the screen-only done-check never re-asked
-    assert result.steps[0].status == "verified"
+    assert result.steps[0].detail.get("status") == "verified"
 
 
 async def test_tier2_unverified_read_does_not_short_circuit(journal_recorder, tmp_path) -> None:
@@ -335,7 +358,7 @@ async def test_tier2_unverified_read_does_not_short_circuit(journal_recorder, tm
 
     async def executor(jev, transport, kind, step_goal, **kw):
         ran.append(kind)
-        return planner.StepResult(kind, step_goal, "none")
+        return planner._step(kind, step_goal, "none")
 
     payloads: list[dict] = []
     for _ in range(planner.MAX_PLANNER_STEPS):
@@ -395,7 +418,7 @@ async def test_run_kind_unattended_runs_a_ready_command(monkeypatch, journal_rec
     monkeypatch.setitem(dispatch.KIND_TABLE, "swipe", _fake_handler(ready=CommandVariant("input keyevent 4", "back")))
     result = await planner.run_kind_unattended(
         SimpleNamespace(name="jev"), DumpTransport(), "swipe", "go back home")
-    assert result.status == "verified"
+    assert result.detail.get("status") == "verified"
     row = [r for r in journal_recorder.outcomes if r.get("key") == "swipe"][-1]
     assert journal_recorder.verdicts[-1]["verdict"].status == "verified"
     assert row["executed_command"] == "input keyevent 4"
@@ -409,7 +432,7 @@ async def test_run_kind_unattended_never_auto_approves(monkeypatch, journal_reco
     monkeypatch.setitem(dispatch.KIND_TABLE, "swipe", _fake_handler(ready=None, call_id=None))
     result = await planner.run_kind_unattended(
         SimpleNamespace(name="jev"), DumpTransport(), "swipe", "go back home")
-    assert result.status == "escalated"
+    assert result.detail.get("status") == "escalated"
     assert any(r.get("key") == "swipe" for r in journal_recorder.outcomes)
     assert journal_recorder.verdicts[-1]["verdict"].status == "escalated"
 

@@ -65,7 +65,7 @@ def record_action(
     gate=None, response: dict | None = None, executed_command: str | None = None,
     executed: list | None = None, recovery_command: str | None = None,
     graph_edge: dict | None = None, decision: str | None = None, status: str | None = None,
-    tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None,
+    tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None, episode_id: str | None = None,
 ) -> Verdict | None:
     """Journal one Act (`record_outcome`, `key` = the kind/element pick key) and,
     given a device `response`, the Verdict it implies (`record_verdict`), both
@@ -90,7 +90,7 @@ def record_action(
         "satisfied": satisfied, "exit_code": exit_code,
     }.items() if v is not None}
     journal = decision_log.get_journal()
-    journal.record_outcome(call_id=call_id, gate=gate, outcome=outcome, extra=extra or None)
+    journal.record_outcome(call_id=call_id, gate=gate, outcome=outcome, extra=extra or None, episode_id=episode_id)
     if verdict:
         journal.record_verdict(call_id=call_id, verdict=verdict)
     return verdict
