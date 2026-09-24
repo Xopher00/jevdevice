@@ -79,18 +79,21 @@ def _abstain_verdict(shortlist: Sequence[str], fits: dict[str, float], confidenc
 
 async def _score_chunk(
     jev: JudgeEngine, query: str, chunk: list[str], instructions: str, state_extra: dict | None,
+    pick_qid: str | None = None,
 ) -> tuple[float, dict[str, float]]:
     """One ask per chunk: is anything here relevant, plus a Choice over this
     chunk's real members. Returns (chunk_relevance, {candidate: probability}).
     An abstain pick contributes nothing to the shortlist -- none_of_these is an
-    answer about the chunk, not a candidate in it."""
+    answer about the chunk, not a candidate in it. `pick_qid`, when given, tags
+    the pick for calibration; omitted, it's asked untagged (unchanged)."""
     if not chunk:
         return 0.0, {}
     profile = current_profile(jev.name)
     state = {"goal": query, "candidates": chunk, **(state_extra or {})}
+    pick_criteria = choice_criteria(_as_criteria(chunk), profile)
     _, answers = await ask(jev, state, {
         "any": question_sets.noul("recall.any"),
-        "pick": Choice(instructions=instructions, criteria=choice_criteria(_as_criteria(chunk), profile)),
+        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=instructions, criteria=pick_criteria),
     }, phase="recall")
     probabilities = {
         candidate: probability for candidate, probability in answers["pick"].probabilities.items()
@@ -102,6 +105,7 @@ async def _score_chunk(
 async def semantic_shortlist(
     jev: JudgeEngine, query: str, candidates: list[str], *, instructions: str,
     chunk_size: int | None = None, k: int | None = None, state_extra: dict | None = None,
+    pick_qid: str | None = None,
 ) -> list[str]:
     """Round 1: chunk relevance * within-chunk probability, keep the top k
     per chunk (beam, not greedy top-1), merged into one shortlist -- capped at
@@ -117,7 +121,7 @@ async def semantic_shortlist(
 
     async def bounded(chunk: list[str]) -> tuple[float, dict[str, float]]:
         async with semaphore:
-            return await _score_chunk(jev, query, chunk, instructions, state_extra)
+            return await _score_chunk(jev, query, chunk, instructions, state_extra, pick_qid)
 
     results = await asyncio.gather(*(bounded(chunk) for chunk in chunks))
 
@@ -135,10 +139,11 @@ async def _pick_and_decide(
     evidence_for: Callable[[list[str]], Awaitable[dict[str, str]]] | None,
     state_extra: dict | None, describe: Callable[[str], str],
     enumerated: Sequence[str], min_fit: float, min_confidence: float, min_margin: float,
-    accept_any_fitting: bool, fit_generated_source: str | None = None,
+    accept_any_fitting: bool, fit_generated_source: str | None = None, pick_qid: str | None = None,
 ) -> NarrowVerdict:
     """Round 2 shared by every path (direct, retrieval shortlist, chunked sweep):
-    one Choice over the shortlist plus a fit Noul per entry, then decide()."""
+    one Choice over the shortlist plus a fit Noul per entry, then decide().
+    `pick_qid`, when given, tags the pick for calibration."""
     profile = current_profile(jev.name)
     if not shortlist:
         return decide(None, {}, 0.0, {}, enumerated, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting)
@@ -151,10 +156,11 @@ async def _pick_and_decide(
     else:
         criteria = {c: evidence.get(c) for c in shortlist}
     state = {"goal": query, "candidates": criteria, **(state_extra or {})}
+    pick_criteria = choice_criteria(criteria, profile)
     # This ask's call_id travels out on the verdict so the downstream outcome row
     # (open_app/dumpsys/scroll_to_find) joins the decision row that picked what ran.
     call_id, answers = await ask(jev, state, {
-        "pick": Choice(instructions=instructions, criteria=choice_criteria(criteria, profile)),
+        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=instructions, criteria=pick_criteria),
         **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source),
     }, phase="ground")
     pick = answers["pick"]
@@ -174,8 +180,10 @@ async def narrow_and_pick(
     min_confidence: float | None = None,
     min_margin: float | None = None, state_extra: dict | None = None, accept_any_fitting: bool = False,
     describe: Callable[[str], str] = lambda c: c, fit_generated_source: str | None = None,
+    pick_qid: str | None = None,
 ) -> NarrowVerdict:
-    """Rounds 1+2+decide: the one function real call sites use.
+    """Rounds 1+2+decide: the one function real call sites use. `pick_qid`,
+    when given, tags every pick this makes for calibration.
 
     When candidates already fit in one chunk (on-screen elements, always small),
     round 1 buys nothing but a round trip and a beam_k=3 cutoff that can lose
@@ -205,7 +213,7 @@ async def narrow_and_pick(
                 evidence_for=evidence_for, state_extra=state_extra, describe=describe,
                 enumerated=candidates, min_fit=min_fit, min_confidence=min_confidence,
                 min_margin=min_margin, accept_any_fitting=accept_any_fitting,
-                fit_generated_source=fit_generated_source,
+                fit_generated_source=fit_generated_source, pick_qid=pick_qid,
             )
             if verdict.ok:
                 return verdict
@@ -214,7 +222,7 @@ async def narrow_and_pick(
             # candidate still gets asked, ordering only, nothing dropped.
         shortlist, _ = ground_candidates(
             await semantic_shortlist(jev, query, candidates, instructions=instructions,
-                                      chunk_size=chunk_size, k=k, state_extra=state_extra),
+                                      chunk_size=chunk_size, k=k, state_extra=state_extra, pick_qid=pick_qid),
             candidates,
         )
     return await _pick_and_decide(
@@ -222,5 +230,5 @@ async def narrow_and_pick(
         evidence_for=evidence_for, state_extra=state_extra, describe=describe,
         enumerated=candidates, min_fit=min_fit, min_confidence=min_confidence,
         min_margin=min_margin, accept_any_fitting=accept_any_fitting,
-        fit_generated_source=fit_generated_source,
+        fit_generated_source=fit_generated_source, pick_qid=pick_qid,
     )

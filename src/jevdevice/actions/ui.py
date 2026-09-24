@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from jevdevice import question_sets
 from jevdevice.budget import choice_criteria, current_profile, is_abstain
 from jevdevice.device import Device
-from jevdevice.jev import Choice, JudgeEngine, Noul, ask
+from jevdevice.jev import Choice, JudgeEngine, ask
 from jevdevice.judge.gate import (
     ClosedSetProposal,
     CommandVariant,
@@ -109,7 +109,7 @@ class TapProposal:
 async def _fused_pick_and_gate(
     jev: JudgeEngine, goal: str, options: dict[str, Element], *,
     pick_instructions: str, fit_instructions: str, safe_fused_id: str, safe_instructions: str,
-    command_for, chosen_label_for, fit_generated_source: str | None = None,
+    command_for, chosen_label_for, fit_generated_source: str | None = None, pick_qid: str | None = None,
 ) -> tuple[NarrowVerdict, GateResult | None]:
     """Narrow + gate in one batched ask instead of two sequential round trips: a per-candidate
     safety Noul (TypeSafe's speculative-fan-out pattern) is asked alongside the pick, using each
@@ -128,16 +128,15 @@ async def _fused_pick_and_gate(
     else:
         criteria = {c: None for c in options}
     safe_keys = {f"safe_{i}": c for i, c in enumerate(options)}
+    pick_criteria = choice_criteria(criteria, profile)
     questions = {
-        "pick": Choice(instructions=pick_instructions, criteria=choice_criteria(criteria, profile)),
+        "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=pick_instructions, criteria=pick_criteria),
         **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source),
         **{
-            key: Noul(instructions=question_sets.text(
-                safe_fused_id,
-                chosen_action=chosen_label_for(c),
-                proposed_command=command_for(options[c]),
-                target_bounds=options[c].bounds,
-            ))
+            key: question_sets.noul(
+                safe_fused_id, chosen_action=chosen_label_for(c),
+                proposed_command=command_for(options[c]), target_bounds=options[c].bounds,
+            )
             for key, c in safe_keys.items()
         },
     }
@@ -178,7 +177,7 @@ async def _propose_gesture(
     jev: JudgeEngine, device: Device, goal: str, *,
     parse_elements, pick_instructions: str, fit_instructions: str, safe_fused_id: str,
     safe_question_id: str, command_for, chosen_label_for, verbose: bool = True,
-    fit_generated_source: str | None = None,
+    fit_generated_source: str | None = None, pick_qid: str | None = None,
 ) -> TapProposal:
     """Shared by tap and long_press: narrow real matching elements + gate the resulting
     gesture. Only the element filter and command/label shape differ between callers.
@@ -207,12 +206,12 @@ async def _propose_gesture(
                 pick_instructions=pick_instructions, fit_instructions=fit_instructions,
                 safe_fused_id=safe_fused_id, safe_instructions=safe_instructions,
                 command_for=command_for, chosen_label_for=chosen_label_for,
-                fit_generated_source=fit_generated_source,
+                fit_generated_source=fit_generated_source, pick_qid=pick_qid,
             )
             if verbose:
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
         else:
-            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c, fit_generated_source=fit_generated_source)
+            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c, fit_generated_source=fit_generated_source, pick_qid=pick_qid)
             if verbose:
                 print(f"shortlist: {verdict.shortlist}")
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
@@ -232,7 +231,7 @@ async def _propose_gesture(
         gate_result = await gate_command(
             jev, command, chosen_label=chosen_label,
             evidence={"target_element": verdict.choice, "target_bounds": target.bounds},
-            instructions=question_sets.text(safe_question_id),
+            qid=safe_question_id,
         )
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
@@ -259,7 +258,7 @@ async def propose_tap(
         safe_question_id="tap.safe",
         command_for=lambda el: f"input tap {el.x} {el.y}",
         chosen_label_for=lambda c: f"tap {c}",
-        verbose=verbose,
+        verbose=verbose, pick_qid="tap.pick",
     )
 
 
@@ -283,7 +282,7 @@ async def propose_long_press(
         safe_question_id="long_press.safe",
         command_for=lambda el: f"input swipe {el.x} {el.y} {el.x} {el.y} 800",
         chosen_label_for=lambda c: f"long-press {c}",
-        verbose=verbose,
+        verbose=verbose, pick_qid="long_press.pick",
     )
 
 
@@ -321,7 +320,7 @@ async def propose_swipe(jev: JudgeEngine, device: Device, goal: str, *, verbose:
         command_for=command_for,
         label_for=lambda d: f"swipe {d}",
         gate_instructions=SWIPE_SAFE_INSTRUCTIONS,
-        verbose=verbose,
+        verbose=verbose, pick_qid="swipe.pick", any_fit_qid="swipe.any_fit", gate_qid="swipe.safe",
     )
 
 
@@ -353,6 +352,7 @@ async def scroll_to_find(
             instructions=question_sets.text("scroll_to_find.pick"),
             fit_instructions=question_sets.text("scroll_to_find.fit"),
             describe=lambda c, options=options: options[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
+            pick_qid="scroll_to_find.pick",
         )
         last_call_id = verdict.call_id
         if verbose:

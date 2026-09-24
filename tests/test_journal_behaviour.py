@@ -158,6 +158,35 @@ async def test_primary_ask_then_device_verdict_labels_the_pooled_unit(tmp_path: 
     assert journal.labeled_pairs("gate", "noul_p", engine="jev", any_revision=True) == [(0.9, True)]
 
 
+async def test_element_pick_via_narrowing_then_verdict_labels_its_unit(tmp_path: Path, monkeypatch) -> None:
+    """A raw pick built by a shared narrowing helper (judge/narrowing.py's
+    `_pick_and_decide`) tags only when the caller threads `pick_qid` through --
+    proved here on narrow_and_pick's own contract."""
+    from typesymbolic.judge import AskResult
+    from typesymbolic.question import Answer
+
+    from jevdevice.journal import outcomes
+    from jevdevice.judge.narrowing import narrow_and_pick
+
+    class FakeJudge:
+        name = "jev"
+
+        async def ask_all(self, state, questions) -> AskResult:
+            return AskResult(answers={
+                "pick": Answer.from_choice(qid="", choice="a", probabilities={"a": 0.9}, confidence=0.9),
+                "fit_0": Answer(qid="fit_0", type="noul", noul=0.9),
+            })
+
+    journal = Journal(root=tmp_path, background_writes=False)
+    monkeypatch.setattr(decision_log, "_default_journal", journal)
+    verdict = await narrow_and_pick(FakeJudge(), "goal", ["a"], instructions="pick?",
+                                    fit_instructions="fit {candidate}?", pick_qid="tap.pick")
+
+    outcomes.record_action(call_id=verdict.call_id, key="pick", response={"status": "ok"})
+
+    assert journal.labeled_pairs("tap.pick", "confidence", engine="jev", any_revision=True) == [(0.9, True)]
+
+
 # --- every ask() call site carries a phase label -----------------------------
 
 def test_every_ask_call_site_carries_a_phase_label() -> None:

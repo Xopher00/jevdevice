@@ -147,10 +147,12 @@ class QuestionSet:
         return _tag(TaggedNoul, question_id, self.version, instructions=self.text(question_id, **slots))
 
     def choice(self, question_id: str, criteria: dict[str, str | None], **slots: object) -> Choice:
-        return _tag(TaggedChoice, question_id, self.version, instructions=self.text(question_id, **slots), criteria=criteria)
+        return _tag(TaggedChoice, question_id, self.version,
+                    instructions=self.text(question_id, **slots), criteria=criteria)
 
     def score(self, question_id: str, criteria: list[str], **slots: object) -> Score:
-        return _tag(TaggedScore, question_id, self.version, instructions=self.text(question_id, **slots), criteria=criteria)
+        return _tag(TaggedScore, question_id, self.version,
+                    instructions=self.text(question_id, **slots), criteria=criteria)
 
     def ask(self, question_id: str, **slots: object) -> Question:
         """The typesymbolic `vocab.Vocabulary` protocol surface: one frozen-worded
@@ -168,8 +170,10 @@ class QuestionSet:
         if entry_type == "noul":
             return _tag(TaggedNoul, question_id, self.version, instructions=instructions)
         if entry_type == "choice":
-            return _tag(TaggedChoice, question_id, self.version, instructions=instructions, criteria=criteria or {})
-        return _tag(TaggedScore, question_id, self.version, instructions=instructions, criteria=criteria or [])
+            return _tag(TaggedChoice, question_id, self.version,
+                        instructions=instructions, criteria=criteria or {})
+        return _tag(TaggedScore, question_id, self.version,
+                    instructions=instructions, criteria=criteria or [])
 
     def unit(self, question_id: str) -> tuple[str, str] | None:
         """`(calib_group, scale)` for core's optional `Vocabulary.unit()` hook:

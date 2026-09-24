@@ -155,15 +155,17 @@ def confirm_with_human(command: CommandVariant, chosen_label: str, confidence: f
 
 async def gate_command(
     jev: JudgeEngine, command: CommandVariant, chosen_label: str, threshold: float | None = None,
-    evidence: dict | None = None, instructions: str = DEFAULT_SAFE_INSTRUCTIONS,
+    evidence: dict | None = None, instructions: str | None = None, qid: str = "gate.safe.default",
 ) -> GateResult:
     """`evidence` is real, code-verified data backing the command (e.g. the
     tapped element's actual on-screen bounds) -- something the model can check
     itself, not another description it has to take on faith like `rationale`.
-    `instructions` defaults to the toggle-command wording; a different command
-    shape (e.g. a tap) needs its own calibrated wording, not this one reused.
-    `threshold` defaults to the engine's calibrated "gate" unit (core
-    `current_threshold`, the profile knob until labels accumulate)."""
+    `instructions`, when given, overrides `qid`'s compiled wording (untagged --
+    calibrate CLIs comparing two raw wordings); otherwise `qid` (defaulting to
+    the toggle-command wording) is asked tagged, so a device verdict on this
+    call's key can calibrate. `threshold` defaults to the engine's calibrated
+    "gate" unit (core `current_threshold`, the profile knob until labels
+    accumulate)."""
     if is_read_only(command.command):
         return GateResult(GateVerdict.ACT, "read_only")
     if is_denied(command.command):
@@ -173,11 +175,12 @@ async def gate_command(
 
     # call_id travels onto the GateResult -> Pending -> PendingAction -> outcome
     # row so the two rows join.
+    safe_question = Noul(instructions=instructions) if instructions is not None else question_sets.noul(qid)
     call_id, answers = await ask(
         jev,
         {"chosen_action": chosen_label, "proposed_command": command.command, "rationale": command.rationale,
          **(evidence or {})},
-        {"safe": Noul(instructions=instructions)},
+        {"safe": safe_question},
         phase="gate",
     )
     return finalize_gate(command, answers["safe"].noul, threshold, call_id=call_id)
@@ -223,19 +226,22 @@ async def propose_from_closed_set(
     options_key: str, pick_instructions: str, any_fit_instructions: str,
     command_for: Callable[[str], CommandVariant], label_for: Callable[[str], str],
     gate_instructions: str, verbose: bool = True, pick_verb: str = "pick",
+    pick_qid: str | None = None, any_fit_qid: str | None = None, gate_qid: str | None = None,
 ) -> ClosedSetProposal:
     """Shared propose pipeline for closed-set actions (keyevent, DND, swipe): one batched
     ask -- which option fits, and does any of them fit -- then the deterministic command
     built from the winning option goes through gate_command. Never executes; returns
     reasons when nothing fits, the judge abstains (none_of_these), or the pick fails
-    the confidence gate."""
+    the confidence gate. `pick_qid`/`any_fit_qid`/`gate_qid`, when given, tag their
+    asks for calibration; omitted, the *_instructions text is asked untagged (unchanged)."""
     profile = current_profile(jev.name)
+    pick_criteria = choice_criteria(options, profile)
     _, answers = await ask(
         jev,
         {"goal": goal, options_key: options},
         {
-            "pick": Choice(instructions=pick_instructions, criteria=choice_criteria(options, profile)),
-            "any_fit": Noul(instructions=any_fit_instructions),
+            "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=pick_instructions, criteria=pick_criteria),
+            "any_fit": question_sets.noul(any_fit_qid) if any_fit_qid else Noul(instructions=any_fit_instructions),
         },
         phase="fill",
     )
@@ -251,7 +257,8 @@ async def propose_from_closed_set(
         return ClosedSetProposal(None, pick_answer.confidence, reasons=(reason,))
     command = command_for(pick_answer.choice)
     chosen_label = label_for(pick_answer.choice)
-    gate_result = await gate_command(jev, command, chosen_label=chosen_label, instructions=gate_instructions)
+    gate_result = await gate_command(jev, command, chosen_label=chosen_label,
+                                     instructions=None if gate_qid else gate_instructions, qid=gate_qid or "gate.safe.default")
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
