@@ -53,34 +53,6 @@ escape-hatch provenance) — the Vocabulary protocol only covers `ask()`.
 
 ## Open items
 
-None verified. Every gap an earlier round of this report raised against
-core is closed at the pinned commit:
-
-- **Noul confidence is never synthesized.** `question.py`'s `Answer`
-  docstring: "`confidence` is the judge's own reported value for
-  choice/score; `None` for a noul -- never synthesized" (line 69); `value()`
-  reads the raw `noul` field for `scale="noul_p"` (lines 87-88). `gate.py`
-  reading the raw noul probability is simply reading the only value core
-  ever puts there, not working around a divergence.
-- **`mutation_gate` fails closed on missing confidence.** `gate.py`'s
-  `_confidence_verdict` (line 59): `if passes is None: return
-  GateResult(settled_uncertain, "no confidence to gate", ...)`, and
-  `mutation_gate` passes `uncertain_verdict=GateVerdict.NEEDS_APPROVAL`
-  (line 78), so a missing confidence already yields `needs_approval`,
-  matching jevdevice's own `finalize_gate`.
-- **Vocabulary takes criteria at ask time.** `vocab.py`'s `Vocabulary`
-  protocol: `def ask(self, qid: str, *, criteria: Mapping[str, str | None]
-  | None = None, **slots: str) -> Question` (line 25); `FrozenVocabulary.ask()`
-  applies a given `criteria` over the entry's own (lines 131, 144-148).
-- **The journal capture surface landed.** `engine.py`'s `ask_batch()` takes
-  `capture`, and journals `state`/`asked`/`extra`/`scope` on every decision
-  row (lines 41-44, 50-51, 60, 71).
-- **Calibration pools by domain-chosen unit, not forced per-qid.**
-  `calibration_store.py`'s `CalibrationStore.key()` is `f"{name}|{engine}|
-  {model_revision or ''}"` (line 30), where `name` is `calibrate/units.py`'s
-  own `(group, scale)` pair (e.g. `gate_threshold` pools onto `"gate"`) --
-  jevdevice already gets the per-engine-scale pooling it wants.
-
-Evidence is against typesymbolic commit `83d312b` (the pin in
-`pyproject.toml`'s `[tool.uv.sources]` comment). Re-verify against the code
-at that path before citing any of this, not from memory.
+None. Verify any future claim of a gap directly against typesymbolic at the
+pinned commit (see `pyproject.toml`'s `[tool.uv.sources]` comment), not from
+memory — the sections above already state what jevdevice gets from core.
