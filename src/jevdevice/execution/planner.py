@@ -64,24 +64,25 @@ class PlannerResult:
 
 
 def _step(kind: str | None, goal: str, status: str) -> ActStep:  # (kind, goal, status) onto core's ActStep
-    return ActStep(name=kind or "", succeeded=None if status == "skipped" else status == "verified", detail={"goal": goal, "status": status})
+    return ActStep(name=kind or "", succeeded=None if status == "skipped" else status == "verified",
+                   detail={"goal": goal, "status": status})
 
 
 async def run_kind_unattended(
-    jev, device, kind: str, goal: str, *, tier: int | None = None, recipe_id: str | None = None, episode_id: str | None = None,
+    jev, device, kind: str, goal: str, *, tier: int | None = None, recipe_id: str | None = None,
 ) -> ActStep:
     """One action through the shared dispatch, with no approval hook."""
-    response = await run_kind(jev, device, kind, goal, tier=tier, recipe_id=recipe_id, episode_id=episode_id)
+    response = await run_kind(jev, device, kind, goal, tier=tier, recipe_id=recipe_id)
     return _step(kind, goal, outcomes.verdict_from_response(response).status)
 
 
-def _planner_row(status: str, *, tier: int, recipe_id: str | None = None, reasons=None, episode_id: str | None = None) -> None:
-    outcomes.record_action(status=status, tier=tier, recipe_id=recipe_id, reasons=list(reasons or ()), episode_id=episode_id)
+def _planner_row(status: str, *, tier: int, recipe_id: str | None = None, reasons=None) -> None:
+    outcomes.record_action(status=status, tier=tier, recipe_id=recipe_id, reasons=list(reasons or ()))
 
 
 async def _replay_chain(
     jev, device, chain: list[tuple[str, str]], *,
-    executor, tier: int, recipe_id: str | None, check_fit: bool = False, episode_id: str | None = None,
+    executor, tier: int, recipe_id: str | None, check_fit: bool = False,
 ) -> tuple[list[ActStep], ActStep | None]:
     """Run the chain in order. With check_fit, first ask a compiled
     still-fits question per step and skip the ones that no longer apply.
@@ -101,14 +102,14 @@ async def _replay_chain(
             if answers["fits"].noul < floor:
                 results.append(_step(kind, step_goal, "skipped"))
                 continue
-        result = await executor(jev, device, kind, step_goal, tier=tier, recipe_id=recipe_id, episode_id=episode_id)
+        result = await executor(jev, device, kind, step_goal, tier=tier, recipe_id=recipe_id)
         results.append(result)
         if not result.succeeded:
             return results, result
     return results, None
 
 
-async def _stepwise_loop(jev, device, goal: str, *, executor, episode_id: str | None = None) -> tuple[list[ActStep], bool]:
+async def _stepwise_loop(jev, device, goal: str, *, executor) -> tuple[list[ActStep], bool]:
     """Pick the next action over the closed vocabulary, run it gated, repeat
     until the done-check confirms the goal or a bound trips."""
     results: list[ActStep] = []
@@ -133,7 +134,7 @@ async def _stepwise_loop(jev, device, goal: str, *, executor, episode_id: str | 
             if escalations >= ESCALATION_LIMIT:
                 return results, False
             continue
-        result = await executor(jev, device, pick.kind, goal, tier=2, episode_id=episode_id)
+        result = await executor(jev, device, pick.kind, goal, tier=2)
         results.append(result)
         if result.succeeded and result.name in OUTPUT_VERIFIED_KINDS:
             # The verified read answered the goal from device output; the
@@ -156,8 +157,7 @@ async def resolve(
     store = store or RecipeStore()
     tier_path: list[int] = []
     all_steps: list[ActStep] = []
-    with goal_scope(goal):
-        eid = Episode(decision_log.get_journal()).episode_id
+    with goal_scope(goal), outcomes.episode_scope(Episode(decision_log.get_journal()).episode_id):
         # --- tier 0: recipe hit (exact goal id, else text-similarity match) --
         recipe: Recipe | None = store.get(goal_id_for(goal))
         score: float | None = None
@@ -167,16 +167,17 @@ async def resolve(
         adapt_from = 0  # chain index tier 1 resumes from: tier 0's verified prefix is done
         if recipe is not None:
             chain = [(step.kind, step.goal) for step in recipe.steps]
-            steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=0, recipe_id=recipe.recipe_id, episode_id=eid)
+            steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=0, recipe_id=recipe.recipe_id)
             all_steps.extend(steps)
             adapt_from = len(steps) - (1 if failed is not None else 0)
             if failed is None:
-                _planner_row("planner_resolved", tier=0, recipe_id=recipe.recipe_id, episode_id=eid)
+                _planner_row("planner_resolved", tier=0, recipe_id=recipe.recipe_id)
                 return PlannerResult(0, "resolved", recipe.recipe_id, score, all_steps, tier_path)
-            _planner_row("planner_fallthrough", tier=0, recipe_id=recipe.recipe_id, episode_id=eid,
-                         reasons=[f"step {failed.name!r} for {failed.detail.get('goal')!r} ended {failed.detail.get('status')}"])
+            d = failed.detail
+            _planner_row("planner_fallthrough", tier=0, recipe_id=recipe.recipe_id,
+                         reasons=[f"step {failed.name!r} for {d.get('goal')!r} ended {d.get('status')}"])
         else:
-            _planner_row("planner_fallthrough", tier=0, reasons=["no recipe at or above the retrieval floor"], episode_id=eid)
+            _planner_row("planner_fallthrough", tier=0, reasons=["no recipe at or above the retrieval floor"])
 
         # --- tier 1: adapt the recipe tier 0 already retrieved (drop-only) --
         # No recipe above the floor at tier 0 means nothing to adapt here
@@ -185,28 +186,29 @@ async def resolve(
         if recipe is not None:
             chain = [(step.kind, step.goal) for step in recipe.steps[adapt_from:]]
             steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=1,
-                                                recipe_id=recipe.recipe_id, check_fit=True, episode_id=eid)
+                                                recipe_id=recipe.recipe_id, check_fit=True)
             all_steps.extend(steps)
             if failed is None:
-                _planner_row("planner_resolved", tier=1, recipe_id=recipe.recipe_id, episode_id=eid)
+                _planner_row("planner_resolved", tier=1, recipe_id=recipe.recipe_id)
                 return PlannerResult(1, "resolved", recipe.recipe_id, score, all_steps, tier_path)
-            _planner_row("planner_fallthrough", tier=1, recipe_id=recipe.recipe_id, episode_id=eid,
-                         reasons=[f"adapted step {failed.name!r} for {failed.detail.get('goal')!r} ended {failed.detail.get('status')}"])
+            d = failed.detail
+            _planner_row("planner_fallthrough", tier=1, recipe_id=recipe.recipe_id,
+                         reasons=[f"adapted {failed.name!r} for {d.get('goal')!r} ended {d.get('status')}"])
         else:
-            _planner_row("planner_fallthrough", tier=1, reasons=["no recipe to adapt"], episode_id=eid)
+            _planner_row("planner_fallthrough", tier=1, reasons=["no recipe to adapt"])
 
         # --- tier 2: stepwise selection over the closed vocabulary -----------
         tier_path.append(2)
-        steps, resolved = await _stepwise_loop(jev, device, goal, executor=executor, episode_id=eid)
+        steps, resolved = await _stepwise_loop(jev, device, goal, executor=executor)
         all_steps.extend(steps)
         if resolved:
-            _planner_row("planner_resolved", tier=2, episode_id=eid)
+            _planner_row("planner_resolved", tier=2)
             return PlannerResult(2, "resolved", None, None, all_steps, tier_path)
-        _planner_row("planner_fallthrough", tier=2, reasons=["stepwise selection exhausted or kept escalating"], episode_id=eid)
+        _planner_row("planner_fallthrough", tier=2, reasons=["stepwise selection exhausted or kept escalating"])
 
         # --- tier 3: cold goal -- the calling agent decomposes, not this code
         tier_path.append(3)
-        _planner_row("cold_goal", tier=3, episode_id=eid,
+        _planner_row("cold_goal", tier=3,
                      reasons=["handing the goal to the calling agent: one device_do per step, each verify-gated; a verified chain is captured as a recipe by journal aggregation"])
         return PlannerResult(3, "cold_goal", recipe.recipe_id if recipe is not None else None,
                              score, all_steps, tier_path)

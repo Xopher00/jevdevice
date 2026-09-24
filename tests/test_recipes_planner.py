@@ -231,8 +231,8 @@ async def test_multi_step_run_shares_one_episode_id(journal_recorder, tmp_path) 
     store = RecipeStore(tmp_path)
     store.upsert(recipe)
 
-    async def executor(jev, transport, kind, step_goal, *, episode_id=None, **kw):
-        outcomes.record_action(call_id=f"cid-{kind}", key=kind, response={"status": "ok"}, episode_id=episode_id)
+    async def executor(jev, transport, kind, step_goal, **kw):
+        outcomes.record_action(call_id=f"cid-{kind}", key=kind, response={"status": "ok"})
         return planner._step(kind, step_goal, "verified")
 
     await planner.resolve(FakeJudge([]), None, goal, executor=executor, store=store)

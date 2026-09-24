@@ -9,6 +9,8 @@ on) and telemetry-only: a failed dump yields None, never fails the action.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from typesymbolic.domain import ActOutcome, ActStep, Verdict
 
@@ -19,6 +21,18 @@ from . import decision_log
 
 ENV_GRAPH_EDGE = "JEV_GRAPH_EDGE"  # "0"/"off" disables the before/after foreground dumps
 GRAPH_EDGE_DEFAULT = True
+
+# One run's episode_id -- record_action reads it like goal_scope()'s goal, no threading needed.
+_EPISODE: ContextVar[str | None] = ContextVar("jevdevice_episode", default=None)
+
+
+@contextmanager
+def episode_scope(episode_id: str | None):
+    token = _EPISODE.set(episode_id)
+    try:
+        yield
+    finally:
+        _EPISODE.reset(token)
 
 
 def graph_edge_enabled() -> bool:
@@ -65,7 +79,7 @@ def record_action(
     gate=None, response: dict | None = None, executed_command: str | None = None,
     executed: list | None = None, recovery_command: str | None = None,
     graph_edge: dict | None = None, decision: str | None = None, status: str | None = None,
-    tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None, episode_id: str | None = None,
+    tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None,
 ) -> Verdict | None:
     """Journal one Act (`record_outcome`, `key` = the kind/element pick key) and,
     given a device `response`, the Verdict it implies (`record_verdict`), both
@@ -90,7 +104,8 @@ def record_action(
         "satisfied": satisfied, "exit_code": exit_code,
     }.items() if v is not None}
     journal = decision_log.get_journal()
-    journal.record_outcome(call_id=call_id, gate=gate, outcome=outcome, extra=extra or None, episode_id=episode_id)
+    journal.record_outcome(call_id=call_id, gate=gate, outcome=outcome, extra=extra or None,
+                           episode_id=_EPISODE.get())
     if verdict:
         journal.record_verdict(call_id=call_id, verdict=verdict)
     return verdict

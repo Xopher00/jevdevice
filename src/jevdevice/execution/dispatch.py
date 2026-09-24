@@ -334,7 +334,7 @@ def call_id_of(proposal) -> str | None:
 
 async def _run_ungated(
     jev, device, kind: str, goal: str, *, direction: str, max_attempts: int,
-    tier: int | None, recipe_id: str | None, episode_id: str | None = None,
+    tier: int | None, recipe_id: str | None,
 ) -> dict:
     """The read-side kinds: no command gate (nothing mutates), but the same
     outcome-row journaling so trajectories join by call_id like every other
@@ -351,7 +351,7 @@ async def _run_ungated(
         outcomes.record_action(
             device=device, call_id=result.call_id, key=kind,
             executed_command=f"monkey -p {result.package} 1" if result.package else None,
-            response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id, episode_id=episode_id,
+            response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
         return response
     if kind == "dumpsys":
@@ -360,7 +360,7 @@ async def _run_ungated(
         outcomes.record_action(
             device=device, call_id=result.call_id, key=kind,
             executed_command=f"dumpsys {result.service}" if result.service else None,
-            response=response, tier=tier, recipe_id=recipe_id, episode_id=episode_id,
+            response=response, tier=tier, recipe_id=recipe_id,
         )
         return response
     if kind == "scroll_to_find":
@@ -372,14 +372,14 @@ async def _run_ungated(
         outcomes.record_action(
             device=device, call_id=result.call_id, key=kind,
             executed_command=result.executed[-1] if result.executed else None, response=response,
-            executed=list(result.executed), graph_edge=edge, tier=tier, recipe_id=recipe_id, episode_id=episode_id,
+            executed=list(result.executed), graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
         return {**response, "executed": list(result.executed)}
     if kind == "screenshot":
         response = {"status": "ok"}
         outcomes.record_action(
             device=device, call_id=None, key=kind, executed_command="screencap -p",
-            response=response, tier=tier, recipe_id=recipe_id, episode_id=episode_id,
+            response=response, tier=tier, recipe_id=recipe_id,
         )
         return response
     raise KeyError(f"not an ungated kind: {kind!r}")
@@ -389,7 +389,7 @@ async def run_kind(
     jev, device, kind: str, goal: str, *, verify: bool = True, auto_approve: bool = False,
     direction: str = "down", max_attempts: int = 8,
     on_pending: Callable[..., Awaitable[dict] | dict] | None = None,
-    tier: int | None = None, recipe_id: str | None = None, episode_id: str | None = None,
+    tier: int | None = None, recipe_id: str | None = None,
 ) -> dict:
     """Run exactly ONE atomic action of one kind end to end: propose -> gate
     -> execute (bracketed with a graph_edge) -> journal the outcome row with
@@ -405,7 +405,7 @@ async def run_kind(
     handler = KIND_TABLE.get(kind)
     if handler is None:
         return await _run_ungated(jev, device, kind, goal, direction=direction,
-                                  max_attempts=max_attempts, tier=tier, recipe_id=recipe_id, episode_id=episode_id)
+                                  max_attempts=max_attempts, tier=tier, recipe_id=recipe_id)
     t0 = time.monotonic()
     proposal = await handler.propose(jev, device, goal)
     call_id = call_id_of(proposal)
@@ -415,7 +415,8 @@ async def run_kind(
             command = proposal.pending.command
         elif on_pending is not None:
             outcomes.record_action(device=device, call_id=call_id, key=kind, status="needs_approval",
-                                   gate=getattr(proposal, "gate_result", None), tier=tier, recipe_id=recipe_id, episode_id=episode_id)
+                                   gate=getattr(proposal, "gate_result", None), tier=tier,
+                                   recipe_id=recipe_id)
             # The hook contract (type hint above) admits sync and async alike:
             # the MCP server parks a pending action synchronously, so the
             # hook's return is awaited only when it is actually awaitable.
@@ -424,7 +425,7 @@ async def run_kind(
             return await hooked if inspect.isawaitable(hooked) else hooked
     if command is None:
         outcomes.record_action(device=device, call_id=call_id, key=kind, response={"status": "escalated"},
-                               gate=getattr(proposal, "gate_result", None), tier=tier, recipe_id=recipe_id, episode_id=episode_id)
+                               gate=getattr(proposal, "gate_result", None), tier=tier, recipe_id=recipe_id)
         return {"status": "escalated", "reasons": list(proposal.reasons)}
     outcome, edge = await outcomes.graph_edge_around(
         device, lambda: handler.execute(jev, device, goal, proposal, command, verify=verify, verbose=False),
@@ -432,7 +433,7 @@ async def run_kind(
     response = response_for(kind, outcome, jev.name)
     outcomes.record_action(
         device=device, call_id=call_id, key=kind, gate=getattr(proposal, "gate_result", None),
-        executed_command=command.command, response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id, episode_id=episode_id,
+        executed_command=command.command, response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
     )
     if kind in ("tap", "long_press", "type_text"):
         response = {**response, "elapsed_s": round(time.monotonic() - t0, 2)}
