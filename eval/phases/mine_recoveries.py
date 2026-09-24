@@ -15,30 +15,23 @@ Offline and journal-only (zero model calls):
 Dev-half only: goal texts are asserted absent from the held-out half (the
 harness only ever runs dev goals; this is a second guard, not a license).
 
-  uv run python eval/phases/mine_recoveries.py [journal_dir]
+  uv run python eval/phases/mine_recoveries.py
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-from jevdevice.journal.decision_log import (
-    ESCALATED,
-    FAILED,
-    NONE,
-    VERIFIED,
-    DecisionJournal,
-)
+from jevdevice.journal import decision_log
 
 OUT_FILE = REPO / "eval" / "phases" / "flywheel" / "recovery_pairs.jsonl"
 MAX_CHAIN_CALL_IDS = 20  # per side of the pair; bounded, named knob
 
-FAILURE_VERIFICATIONS = frozenset({ESCALATED, FAILED, NONE})
+FAILURE_VERIFICATIONS = frozenset({"escalated", "failed", "unconfirmed"})
 
 
 def heldout_goals() -> set[str]:
@@ -52,35 +45,34 @@ def _ts(row: dict) -> str:
     return row.get("ts") or ""
 
 
-def trajectories_by_goal(journal: DecisionJournal) -> dict[str, list[dict]]:
+def trajectories_by_goal(rows: list[dict]) -> dict[str, list[dict]]:
     """Primary (shadow-free) decision+outcome rows grouped by goal_id, ordered.
     Ordered by (ts, write order): same-millisecond rows keep their on-disk order,
     so a failure and its recovery never compare equal."""
     grouped: dict[str, list[tuple[tuple[str, int], dict]]] = {}
-    for path in sorted(journal.directory.glob("journal-*.jsonl")):
-        for seq, row in enumerate(journal.replay(day=path.stem.removeprefix("journal-"))):
-            if row.get("type") not in ("decision", "outcome") or row.get("shadow_of"):
-                continue
-            goal_id = row.get("goal_id")
-            if goal_id:
-                grouped.setdefault(goal_id, []).append(((_ts(row), seq), row))
+    for seq, row in enumerate(rows):
+        if row.get("type") not in ("decision", "outcome") or (row.get("scope") or {}).get("shadow_of"):
+            continue
+        goal_id = row["scope"].get("goal_id") if row["type"] == "decision" else row.get("goal_id")
+        if goal_id:
+            grouped.setdefault(goal_id, []).append(((_ts(row), seq), row))
     return {goal_id: [row for _, row in sorted(entries, key=lambda item: item[0])]
             for goal_id, entries in grouped.items()}
 
 
-def mine_pair(rows: list[dict]) -> dict | None:
+def mine_pair(rows: list[dict], verdicts: dict[str, str]) -> dict | None:
     """The first (failure → verified recovery) chain in one goal's trajectory,
     referencing the failed side by call_id chain. None when nothing failed.
     Rows arrive ts-ordered (ties keep write order), so position is the clock."""
     outcomes = [r for r in rows if r.get("type") == "outcome"]
-    failures = [r for r in outcomes if r.get("verification") in FAILURE_VERIFICATIONS]
+    failures = [r for r in outcomes if verdicts.get(r.get("call_id"), "unconfirmed") in FAILURE_VERIFICATIONS]
     if not failures:
         return None
     failure = failures[0]
     failure_index = rows.index(failure)
     recovery = next(
         (r for r in rows[failure_index + 1:]
-         if r.get("type") == "outcome" and r.get("verification") == VERIFIED),
+         if r.get("type") == "outcome" and verdicts.get(r.get("call_id")) == "verified"),
         None,
     )
     if recovery is None:
@@ -114,16 +106,18 @@ def mine_pair(rows: list[dict]) -> dict | None:
     }
 
 
-def collect(journal: DecisionJournal) -> tuple[list[dict], Counter]:
+def collect(journal) -> tuple[list[dict], Counter]:
+    rows = list(journal.replay())
+    verdicts = {r["call_id"]: r["status"] for r in rows if r.get("type") == "verdict" and r.get("call_id")}
     heldout = heldout_goals()
     dropped: Counter = Counter()
     pairs: list[dict] = []
-    for goal_id, rows in trajectories_by_goal(journal).items():
-        goal_text = next((r.get("goal") for r in rows if r.get("goal")), "")
+    for goal_id, grows in trajectories_by_goal(rows).items():
+        goal_text = next((r.get("goal") for r in grows if r.get("goal")), "")
         if goal_text.casefold() in heldout:
             dropped["heldout_goal"] += 1
             continue
-        pair = mine_pair(rows)
+        pair = mine_pair(grows, verdicts)
         if pair is None:
             dropped["no_failure_or_no_recovery"] += 1
             continue
@@ -134,7 +128,7 @@ def collect(journal: DecisionJournal) -> tuple[list[dict], Counter]:
 
 
 def main() -> int:
-    journal = DecisionJournal(sys.argv[1] if len(sys.argv) > 1 else None)
+    journal = decision_log.get_journal()
     pairs, dropped = collect(journal)
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_FILE, "w", encoding="utf-8") as handle:

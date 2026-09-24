@@ -31,7 +31,7 @@ The Kaggle fine-tune script explodes each exported row into one training
 sequence per supervised question -- laya's build_sequence encodes ONE question
 per sequence, so supervision granularity is (state, question, label).
 
-Run: uv run python eval/phases/export_finetune.py [journal_dir]
+Run: uv run python eval/phases/export_finetune.py
 """
 
 from __future__ import annotations
@@ -45,12 +45,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-# The label tables + matching logic come from the refit harness (single source
-# of truth, reused -- a drift-guard test pins the mirror copy).
-import recalibrate_thresholds as p4r
-
+# The label tables come from the single source of truth the calibrate CLIs run against.
 from jevdevice.budget import NONE_OF_THESE
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.calibrate import cases as p4r
+from jevdevice.journal import decision_log
 
 OUT_DIR = REPO / "eval" / "phases" / "finetune"
 
@@ -164,7 +162,7 @@ def tap_table_label(state: dict, command: str) -> bool | None:
                  if cmd == command and state.get("chosen_action") in (None, "", action)), None)
 
 
-def label_gate_row(row: dict, outcome: dict | None) -> dict[str, dict]:
+def label_gate_row(row: dict, outcome: dict | None, verdicts: dict[str, str]) -> dict[str, dict]:
     """gate 'safe' Noul: dev-tap table first; a live row joins its device-verified
     outcome by call_id. A human-corrected recovery_command means the proposal did
     NOT run as proposed -- the verified execution then proves nothing about the
@@ -180,7 +178,7 @@ def label_gate_row(row: dict, outcome: dict | None) -> dict[str, dict]:
     if label is None and outcome is not None:
         recovery = outcome.get("recovery_command")
         proposed_ran = recovery in (None, "", command)
-        if outcome.get("verification") == "verified" and proposed_ran:
+        if verdicts.get(outcome.get("call_id")) == "verified" and proposed_ran:
             label = True
     if label is None:
         return {}
@@ -191,15 +189,18 @@ def is_dev_tap_gate(goal: str | None) -> bool:
     return goal in {action for action, _, _ in p4r.GATE_NOUL_CASES}
 
 
-def example_for(row: dict, journal_file: str, outcomes: dict[str, dict]) -> dict | None:
+def example_for(
+    row: dict, journal_file: str, outcomes: dict[str, dict], verdicts: dict[str, str],
+) -> dict | None:
     """(provenance, supervision) for one journaled primary decision, or None."""
     phase = row.get("phase")
+    scope = row.get("scope") or {}
     supervision: dict[str, dict] = {}
     provenance: str | None = None
     if phase == "gate":
-        supervision = label_gate_row(row, outcomes.get(row.get("call_id")))
+        supervision = label_gate_row(row, outcomes.get(row.get("call_id")), verdicts)
         if supervision:
-            provenance = "dev_tap" if is_dev_tap_gate(row.get("goal") or "") else "live_verified"
+            provenance = "dev_tap" if is_dev_tap_gate(scope.get("goal") or "") else "live_verified"
     elif phase == "ground":
         supervision = label_ground_row(row)
         provenance = "dev_tap" if supervision else None
@@ -214,8 +215,8 @@ def example_for(row: dict, journal_file: str, outcomes: dict[str, dict]) -> dict
         return None
     return {
         "call_id": row["call_id"],
-        "goal_id": row.get("goal_id"),
-        "goal": row.get("goal") or (row.get("state") or {}).get("goal"),
+        "goal_id": scope.get("goal_id"),
+        "goal": scope.get("goal") or (row.get("state") or {}).get("goal"),
         "phase": phase,
         "engine": row.get("engine"),
         "journal_file": journal_file,
@@ -264,52 +265,48 @@ def count_distribution(examples: list[dict]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def spot_check(journal: DecisionJournal, examples: list[dict]) -> int:
+def _journal_file(row: dict) -> str:
+    """The rotation-daily file a row landed in, derived from its own ts (no
+    private Journal internals needed)."""
+    return f"journal-{(row.get('ts') or '')[:10].replace('-', '')}.jsonl"
+
+
+def spot_check(journal, examples: list[dict]) -> int:
     """Re-derive SPOT_CHECK_N exported examples straight from their journal rows."""
     random.seed(SPOT_CHECK_SEED)
     sample = random.sample(examples, min(SPOT_CHECK_N, len(examples)))
-    wanted_files = {e["journal_file"] for e in sample}
-    rows: dict[tuple[str, str], dict] = {}
-    for path in sorted(journal.directory.glob("journal-*.jsonl")):
-        if path.name not in wanted_files:
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if row.get("type") == "decision" and row.get("call_id"):
-                rows[(path.name, row["call_id"])] = journal._resolve_value(row)
+    rows = {(_journal_file(r), r["call_id"]): r for r in journal.replay()
+            if r.get("type") == "decision" and r.get("call_id")}
     ok = 0
     for example in sample:
         row = rows.get((example["journal_file"], example["call_id"]))
         assert row is not None, f"spot-check: row {example['call_id']} not found in {example['journal_file']}"
         assert row.get("state") == example["state"], f"spot-check state drift on {example['call_id']}"
         assert row.get("questions") == example["questions"], f"spot-check question drift on {example['call_id']}"
-        rederived = example_for(row, example["journal_file"], {})
+        rederived = example_for(row, example["journal_file"], {}, {})
         assert rederived is not None, f"spot-check: {example['call_id']} no longer exports"
         assert rederived["supervision"] == example["supervision"], f"spot-check supervision drift on {example['call_id']}"
         ok += 1
     return ok
 
 
-def collect(journal: DecisionJournal, exclude_goal_ids: frozenset[str] = frozenset()) -> tuple[list[dict], dict[str, dict], Counter]:
+def collect(journal, exclude_goal_ids: frozenset[str] = frozenset()) -> tuple[list[dict], dict[str, dict], Counter]:
     """Primary, answered decision rows (+ outcome index), with exclusion counts."""
     outcomes: dict[str, dict] = {}
+    verdicts: dict[str, str] = {}
     rows: list[tuple[str, dict]] = []
     dropped: Counter = Counter()
-    for path in sorted(journal.directory.glob("journal-*.jsonl")):
-        day = path.stem.removeprefix("journal-")
-        for raw in journal.replay(day=day):
-            if raw.get("type") == "outcome" and raw.get("call_id"):
-                outcomes[raw["call_id"]] = raw
-            elif raw.get("type") == "decision":
-                rows.append((path.name, raw))
+    for raw in journal.replay():
+        if raw.get("type") == "outcome" and raw.get("call_id"):
+            outcomes[raw["call_id"]] = raw
+        elif raw.get("type") == "verdict" and raw.get("call_id"):
+            verdicts[raw["call_id"]] = raw.get("status")
+        elif raw.get("type") == "decision":
+            rows.append((_journal_file(raw), raw))
     examples: list[dict] = []
     for name, row in rows:
-        if row.get("shadow_of"):
+        scope = row.get("scope") or {}
+        if scope.get("shadow_of"):
             dropped["shadow_row"] += 1
             continue
         if row.get("error") or not row.get("answers"):
@@ -321,11 +318,11 @@ def collect(journal: DecisionJournal, exclude_goal_ids: frozenset[str] = frozens
             # Fail-closed on contamination -- unless the operator explicitly
             # excluded this goal id (stray pre-guard rows, card-recorded), the
             # exact mechanism build_recipes.py uses. Never a silent default.
-            if row.get("goal_id") not in exclude_goal_ids:
+            if scope.get("goal_id") not in exclude_goal_ids:
                 raise SystemExit(f"HELDOUT CONTAMINATION: row {row['call_id']} carries held-out goal {goal!r}")
             dropped["operator_excluded"] += 1
             continue
-        example = example_for(row, name, outcomes)
+        example = example_for(row, name, outcomes, verdicts)
         if example is None:
             dropped["unjudgeable_or_excluded"] += 1
             continue
@@ -340,19 +337,15 @@ def main() -> int:
     # early run). Mirrors build_recipes.py's flag -- excluding is an operator
     # decision made by passing the flag here, never a silent default.
     exclude: set[str] = set()
-    journal_dir: str | None = None
     i = 0
     while i < len(args):
         if args[i] == "--exclude" and i + 1 < len(args):
             exclude.add(args[i + 1])
             i += 2
-        elif journal_dir is None and not args[i].startswith("--"):
-            journal_dir = args[i]
-            i += 1
         else:
             print(f"unknown argument {args[i]!r}", file=sys.stderr)
             return 2
-    journal = DecisionJournal(journal_dir)
+    journal = decision_log.get_journal()
     examples, _outcomes, dropped = collect(journal, exclude_goal_ids=frozenset(exclude))
 
     # dedupe identical (state, questions, supervision): calibration reruns repeat cases
@@ -392,7 +385,7 @@ def main() -> int:
     provenance = Counter(e["provenance"] for e in examples)
     card = {
         "generator": "eval/phases/export_finetune.py",
-        "journal_dir": str(journal.directory),
+        "journal_dir": str(journal.root),
         "labeled_source": "decision journal, dev-half only (heldout asserted absent; shadow_of rows excluded)",
         "n_examples": len(examples),
         "n_train": len(train),

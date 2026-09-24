@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from jevdevice.budget import current_profile, is_abstain
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal import decision_log
 from jevdevice.matching import decide
 
 HERE = Path(__file__).resolve().parent
@@ -41,8 +41,8 @@ EXPECTED_FITS = {
 def load_pick_rows() -> list[dict]:
     """Decision rows whose ask carried a Choice, primary rows only."""
     rows = []
-    for r in DecisionJournal().replay():
-        if r.get("type") != "decision" or r.get("shadow_of"):
+    for r in decision_log.get_journal().replay():
+        if r.get("type") != "decision" or r["scope"].get("shadow_of"):
             continue
         answers = r.get("answers") or {}
         if not isinstance(answers, dict) or "pick" not in answers:

@@ -3,9 +3,7 @@ calls, zero device. Every planner row carries `tier`/`recipe_id` fields, so
 the decomposition profile is a journal query.
 
 Output: eval/phases/recipes/tier_report.json + stdout JSON: per tier,
-resolutions, fall-throughs, and the step outcomes attributed to that tier's
-executions.
-"""
+resolutions, fall-throughs, and step outcomes attributed to that tier."""
 
 from __future__ import annotations
 
@@ -15,7 +13,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import get_journal
 
 OUT_DIR = REPO / "eval" / "phases" / "recipes"
 PLANNER_STATUSES = {"planner_resolved", "planner_fallthrough", "cold_goal", "human_escalation"}
@@ -25,7 +23,9 @@ def report(journal) -> dict:
     tier_events: dict[int, Counter] = {tier: Counter() for tier in range(5)}
     step_outcomes: dict[int, Counter] = {tier: Counter() for tier in range(5)}
     goals_seen: set[tuple] = set()
-    for row in journal.replay():
+    rows = list(journal.replay())
+    verdicts = {r["call_id"]: r.get("status") for r in rows if r["type"] == "verdict"}
+    for row in rows:
         if row.get("type") != "outcome":
             continue
         tier = row.get("tier")
@@ -38,8 +38,8 @@ def report(journal) -> dict:
             tier_events[tier][status] += 1
             if row.get("goal"):
                 goals_seen.add((row["goal"], status))
-        elif row.get("kind"):
-            step_outcomes[tier][row.get("verification") or "none"] += 1
+        elif row.get("key"):
+            step_outcomes[tier][verdicts.get(row.get("call_id")) or "none"] += 1
     return {
         "tiers": {
             str(tier): {
@@ -56,7 +56,7 @@ def report(journal) -> dict:
 
 
 def main() -> int:
-    out = report(DecisionJournal())
+    out = report(get_journal())
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "tier_report.json").write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
     print(json.dumps(out, indent=2, sort_keys=True))

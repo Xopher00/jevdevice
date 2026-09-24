@@ -34,7 +34,7 @@ from jevdevice.budget import current_profile
 from jevdevice.common import bootstrap
 from jevdevice.device import CliDevice, Device
 from jevdevice.journal import outcomes
-from jevdevice.journal.decision_log import ESCALATED, VERIFIED, goal_scope
+from jevdevice.journal.decision_log import goal_scope
 from jevdevice.judge.gate import (
     CommandVariant,
     gate_command,
@@ -129,13 +129,12 @@ async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, ve
         )
         call_id = proposal.gate_result.call_id if proposal.gate_result else None
         if proposal.pending is not None:  # the human decides; unattended runs count this as a failure
-            outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
-                                  status="needs_approval", kind=KIND_CLI_PROBE,
-                                  reasons=proposal.reasons)
+            outcomes.record_action(device=device, call_id=call_id, key=KIND_CLI_PROBE,
+                                   response={"status": "escalated"}, reasons=proposal.reasons)
             return {"status": "escalated", "reasons": ("needs_approval",), "command": None}
         if proposal.ready is None:
-            outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
-                                  status="escalated", kind=KIND_CLI_PROBE, reasons=proposal.reasons)
+            outcomes.record_action(device=device, call_id=call_id, key=KIND_CLI_PROBE,
+                                   response={"status": "escalated"}, reasons=proposal.reasons)
             return {"status": "escalated", "reasons": proposal.reasons, "command": None}
 
         command = proposal.ready
@@ -153,11 +152,8 @@ async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, ve
             "satisfied": satisfied,
             "reasons": [] if result.exit_code == 0 else [f"exit {result.exit_code}"],
         }
-        outcomes.emit_outcome(
-            device=device, call_id=call_id, executed_command=command.command,
-            verification=outcomes.verification_from_response(response), response=response,
-            kind=KIND_CLI_PROBE,
-        )
+        outcomes.record_action(device=device, call_id=call_id, key=KIND_CLI_PROBE,
+                               executed_command=command.command, response=response)
         return {**response, "command": command.command}
 
 
@@ -273,9 +269,11 @@ class CliTaskFamily:
                                self._candidates[task_name], verbose=False)
 
     def verify(self, task_name: str, journal_rows=None) -> float:
-        rows = [r for r in (journal_rows if journal_rows is not None else _journal_rows())
-                if r.get("goal_id") == _goal_id(self.add_instructions(task_name))]
-        return 1.0 if any(r.get("verification") == VERIFIED for r in rows) else 0.0
+        rows = list(journal_rows if journal_rows is not None else _journal_rows())
+        verdicts = {r["call_id"]: r["status"] for r in rows if r.get("type") == "verdict"}
+        goal_id = _goal_id(self.add_instructions(task_name))
+        hits = (r for r in rows if r.get("type") == "outcome" and r.get("goal_id") == goal_id)
+        return 1.0 if any(verdicts.get(r["call_id"]) == "verified" for r in hits) else 0.0
 
 
 def _goal_id(goal: str) -> str:
@@ -285,9 +283,9 @@ def _goal_id(goal: str) -> str:
 
 
 def _journal_rows() -> list[dict]:
-    from jevdevice.journal.decision_log import DecisionJournal
+    from jevdevice.journal.decision_log import get_journal
 
-    return list(DecisionJournal().replay())
+    return list(get_journal().replay())
 
 
 # --- journal device-column report (cross-family separation) -----------------------
@@ -301,12 +299,12 @@ def journal_report() -> None:
     data (which commands ran) does not."""
     from collections import Counter
 
-    from jevdevice.journal.decision_log import DecisionJournal
+    from jevdevice.journal.decision_log import get_journal
 
     outcomes_by_device: Counter = Counter()
     decisions_by_call_id: dict[str, dict] = {}
     cli_call_ids: set[str] = set()
-    for row in DecisionJournal().replay():
+    for row in get_journal().replay():
         if row.get("type") == "outcome":
             outcomes_by_device[row.get("device") or "(none)"] += 1
             if str(row.get("device", "")).startswith("cli:") and row.get("call_id"):

@@ -6,7 +6,7 @@ row it observed (call_id == shadow_of, engine=jev) and reports:
     plus mean |delta|; abstentions reported separately)
   - latency comparison from the rows' own elapsed_ms (p50/p95 per engine)
 
-Run: uv run python eval/phases/shadow_agreement.py [journal_dir]
+Run: uv run python eval/phases/shadow_agreement.py
 Output is pipe-friendly: JSON lines, then a human summary.
 """
 
@@ -14,11 +14,9 @@ from __future__ import annotations
 
 import json
 import statistics
-import sys
 from collections import defaultdict
-from pathlib import Path
 
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal import decision_log
 
 
 def _choice_winner(answer: dict) -> str | None:
@@ -45,9 +43,9 @@ def _compare(primary_answer: dict, shadow_answer: dict) -> dict:
 
 def build_report(rows: list[dict]) -> dict:
     primary_by_call = {r["call_id"]: r for r in rows
-                       if r.get("type") == "decision" and r.get("shadow_of") is None}
-    pairs = [(primary_by_call[r["shadow_of"]], r) for r in rows
-             if r.get("type") == "decision" and r.get("shadow_of") in primary_by_call]
+                       if r.get("type") == "decision" and not r["scope"].get("shadow_of")}
+    pairs = [(primary_by_call[r["scope"]["shadow_of"]], r) for r in rows
+             if r.get("type") == "decision" and r["scope"].get("shadow_of") in primary_by_call]
 
     per_phase: dict[str, list[dict]] = defaultdict(list)
     comparisons: list[dict] = []
@@ -57,7 +55,7 @@ def build_report(rows: list[dict]) -> dict:
             if s_answer is None:
                 continue
             comp = _compare(p_answer, s_answer)
-            comp.update({"phase": primary.get("phase"), "goal_id": primary.get("goal_id")})
+            comp.update({"phase": primary.get("phase"), "goal_id": primary["scope"].get("goal_id")})
             comparisons.append(comp)
             per_phase[comp["phase"]].append(comp)
 
@@ -86,8 +84,9 @@ def build_report(rows: list[dict]) -> dict:
         return {"n": len(values), "p50_ms": pct(0.5), "p95_ms": pct(0.95),
                 "min_ms": values[0], "max_ms": values[-1]}
 
-    shadowed_count = sum(1 for r in rows if r.get("type") == "decision" and r.get("shadow_of"))
-    primaries_with_shadow = len({r["shadow_of"] for r in rows if r.get("shadow_of")})
+    shadow_rows = [r for r in rows if r.get("type") == "decision" and (r.get("scope") or {}).get("shadow_of")]
+    shadowed_count = len(shadow_rows)
+    primaries_with_shadow = len({r["scope"]["shadow_of"] for r in shadow_rows})
     return {
         "journal_rows": len(rows),
         "shadow_rows": shadowed_count,
@@ -100,8 +99,7 @@ def build_report(rows: list[dict]) -> dict:
 
 
 def main() -> None:
-    journal_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    rows = list(DecisionJournal(journal_dir).replay())
+    rows = list(decision_log.get_journal().replay())
     report = build_report(rows)
     for comp in report.pop("comparisons"):
         print(json.dumps(comp))

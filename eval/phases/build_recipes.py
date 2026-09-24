@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 
 
 from jevdevice.execution.recipes import RecipeStore, recipes_from_journal, verify_recipe
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal.decision_log import get_journal
 
 OUT_DIR = REPO / "eval" / "phases" / "recipes"
 
@@ -41,7 +41,7 @@ def main() -> int:
             print(f"unknown argument {args[i]!r}", file=sys.stderr)
             return 2
     heldout = splitguard.heldout_goal_ids()
-    journal = DecisionJournal()
+    journal = get_journal()
     rows = journal.replay()  # one full journal scan, shared with verify_recipe below
     # Fail-closed on contamination: recipes_from_journal raises on any held-out
     # goal unless the operator explicitly excluded it above (card-recorded).

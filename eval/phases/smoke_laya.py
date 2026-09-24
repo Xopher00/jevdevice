@@ -45,21 +45,18 @@ async def run_goals() -> list[dict]:
 
 
 def journal_rows_for_goals() -> list[dict]:
-    from jevdevice.journal.decision_log import DecisionJournal, goal_id_for
+    from jevdevice.journal.decision_log import get_journal, goal_id_for
 
     ids = {goal_id_for(goal) for goal in GOALS}
-    out = []
-    for row in DecisionJournal().replay():
-        if row.get("goal_id") in ids:
-            out.append({
-                "type": row["type"], "engine": row.get("engine"), "phase": row.get("phase"),
-                "verification": row.get("verification"), "call_id": row.get("call_id"),
-                "command": row.get("executed_command"), "error": row.get("error"),
-                "answers": {k: {"choice": a.get("choice"), "noul": a.get("noul"),
-                                "confidence": a.get("confidence")}
-                            for k, a in (row.get("answers") or {}).items()},
-            })
-    return out
+    rows = list(get_journal().replay())
+    verdicts = {r["call_id"]: r.get("status") for r in rows if r.get("type") == "verdict"}
+    return [{
+        "type": row["type"], "engine": row.get("engine"), "phase": row.get("phase"),
+        "verification": verdicts.get(row.get("call_id")), "call_id": row.get("call_id"),
+        "command": row.get("executed_command"), "error": row.get("error"),
+        "answers": {k: {"choice": a.get("choice"), "noul": a.get("noul"), "confidence": a.get("confidence")}
+                    for k, a in (row.get("answers") or {}).items()},
+    } for row in rows if (row.get("goal_id") or (row.get("scope") or {}).get("goal_id")) in ids]
 
 
 async def main() -> None:

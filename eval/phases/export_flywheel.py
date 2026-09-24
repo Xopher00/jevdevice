@@ -16,20 +16,19 @@ Offline + journal-only; consumes mine_recoveries.py's recovery_pairs.jsonl
 and the journal directly for trajectories. Dev-half only: held-out goal texts
 are asserted absent from every emitted row. Shadow rows never enter.
 
-  uv run python eval/phases/export_flywheel.py [journal_dir]
+  uv run python eval/phases/export_flywheel.py
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
 from jevdevice.budget import NONE_OF_THESE
-from jevdevice.journal.decision_log import VERIFIED, DecisionJournal
+from jevdevice.journal import decision_log
 
 OUT_DIR = REPO / "eval" / "phases" / "flywheel"
 FORMAT_VERSION = "flywheel-v1"  # bump on any format change; the card + doc record it
@@ -38,7 +37,6 @@ FORMAT_VERSION = "flywheel-v1"  # bump on any format change; the card + doc reco
 WEIGHT_ACTION = 1.0    # a command that actually ran on the device
 WEIGHT_DECISION = 1.0  # the judge's Choice pick (which app / element / service / kind)
 WEIGHT_CHATTER = 0.1   # Noul evidence (fits, verifies), reasons, abstain text
-
 import mine_recoveries as p7m
 
 TRAINING_FORMAT_DOC = """\
@@ -104,8 +102,8 @@ def spans_for(rows: list[dict]) -> list[dict]:
                 spans.append({"call_id": call_id, "role": "chatter", "phase": row.get("phase"),
                               "text": ";".join(str(r) for r in row["reasons"]), "weight": WEIGHT_CHATTER})
         else:  # outcome row
-            executed = row.get("executed") or ([row.get("executed_command")] if row.get("executed_command") else [])
-            for command in executed:
+            names = [s.get("name") for s in (row.get("steps") or []) if s.get("name")]
+            for command in names or ([row["executed_command"]] if row.get("executed_command") else []):
                 spans.append({"call_id": call_id, "role": "action", "text": command, "weight": WEIGHT_ACTION})
             if row.get("recovery_command"):
                 spans.append({"call_id": call_id, "role": "action", "text": row["recovery_command"],
@@ -116,8 +114,8 @@ def spans_for(rows: list[dict]) -> list[dict]:
 def sgcd_row(pair: dict) -> dict:
     """One recovery pair -> sgcd-v1 row: broken prefix as context, loss on the
     recovery side's action+decision spans only."""
-    journal = DecisionJournal()
-    rows = p7m.trajectories_by_goal(journal).get(pair["goal_id"], [])
+    journal_rows = list(decision_log.get_journal().replay())
+    rows = p7m.trajectories_by_goal(journal_rows).get(pair["goal_id"], [])
     failure_ts = pair["broken"]["ts"]
     recovery_ts = pair["recovery"]["ts"]
     prefix_rows = [r for r in rows if (r.get("ts") or "") <= failure_ts]
@@ -136,9 +134,9 @@ def sgcd_row(pair: dict) -> dict:
     }
 
 
-def span_weighted_row(goal_id: str, rows: list[dict], goal: str) -> dict | None:
+def span_weighted_row(goal_id: str, rows: list[dict], goal: str, verdicts: dict[str, str]) -> dict | None:
     """One device-verified trajectory -> span-weighted-v1 row."""
-    if not any(r.get("type") == "outcome" and r.get("verification") == VERIFIED for r in rows):
+    if not any(r.get("type") == "outcome" and verdicts.get(r.get("call_id")) == "verified" for r in rows):
         return None
     return {
         "format": "span-weighted-v1",
@@ -149,7 +147,9 @@ def span_weighted_row(goal_id: str, rows: list[dict], goal: str) -> dict | None:
 
 
 def main() -> int:
-    journal = DecisionJournal(sys.argv[1] if len(sys.argv) > 1 else None)
+    journal = decision_log.get_journal()
+    journal_rows = list(journal.replay())
+    verdicts = {r["call_id"]: r["status"] for r in journal_rows if r["type"] == "verdict"}
     heldout = p7m.heldout_goals()
 
     pairs_file = OUT_DIR / "recovery_pairs.jsonl"
@@ -165,10 +165,10 @@ def main() -> int:
         sgcd_rows.append(sgcd_row(pair))
 
     weighted_rows = []
-    for goal_id, rows in p7m.trajectories_by_goal(journal).items():
+    for goal_id, rows in p7m.trajectories_by_goal(journal_rows).items():
         goal = next((r.get("goal") for r in rows if r.get("goal")), "")
         assert goal.casefold() not in heldout, f"held-out goal reached the exporter: {goal!r}"
-        row = span_weighted_row(goal_id, rows, goal)
+        row = span_weighted_row(goal_id, rows, goal, verdicts)
         if row is not None:
             weighted_rows.append(row)
 

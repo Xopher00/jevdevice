@@ -27,7 +27,7 @@ if str(PHASES) not in sys.path:
 
 from splitguard import dev_goals
 
-from jevdevice.journal.decision_log import VERIFIED, goal_id_for
+from jevdevice.journal.decision_log import goal_id_for
 
 FAMILY_NAME = "jevdevice-phone"
 # METR task families expose one family per deployment surface; the phone goals
@@ -70,13 +70,13 @@ class PhoneTaskFamily:
                              executor=executor, store=store)
 
     def verify(self, task_name: str, journal_rows=None) -> float:
-        """Device-truth score in [0, 1] from the journal: 1.0 iff the task's
-        goal_id has at least one device-VERIFIED outcome row (the same
-        verification outcomes.emit_outcome records). Journal-only: zero model
-        calls, no device round trip."""
-        rows = [r for r in (journal_rows if journal_rows is not None else _journal_rows())
-                if r.get("goal_id") == task_name]
-        return 1.0 if any(r.get("verification") == VERIFIED for r in rows) else 0.0
+        """Device-truth score in [0, 1]: 1.0 iff the task's goal_id has an
+        outcome row whose joined verdict is verified. Journal-only, zero
+        model calls, no device round trip."""
+        rows = list(journal_rows if journal_rows is not None else _journal_rows())
+        verdicts = {r["call_id"]: r.get("status") for r in rows if r.get("type") == "verdict"}
+        return 1.0 if any(r.get("type") == "outcome" and r.get("goal_id") == task_name
+                          and verdicts.get(r["call_id"]) == "verified" for r in rows) else 0.0
 
 
 def aggregate_scores(task_names: list[str], journal_rows=None) -> dict[str, float]:

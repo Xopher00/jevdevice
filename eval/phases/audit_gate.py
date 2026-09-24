@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from jevdevice.budget import current_profile
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal import decision_log
 from jevdevice.judge import gate as gate_mod
 
 HERE = Path(__file__).resolve().parent
@@ -41,7 +41,7 @@ RECORDED_TAP_NOULS = (
 
 
 def load_rows() -> list[dict]:
-    return list(DecisionJournal().replay())
+    return list(decision_log.get_journal().replay())
 
 
 def structure_facts() -> list[str]:
@@ -66,10 +66,11 @@ def deny_list_check(rows: list[dict]) -> list[str]:
     """Classify every command the journal saw (executed or gated) with the
     as-built classifiers -- the deny-list is pure code, so this is exhaustive."""
     lines = ["-- deny-list / read-only classification of journaled commands --"]
+    status = {r["call_id"]: r.get("status") for r in rows if r.get("type") == "verdict" and r.get("call_id")}
     commands: dict[str, str] = {}
     for r in rows:
         if r.get("type") == "outcome" and r.get("executed_command"):
-            commands.setdefault(r["executed_command"], r.get("verification") or "none")
+            commands.setdefault(r["executed_command"], status.get(r.get("call_id")) or "none")
         if r.get("type") == "decision" and r.get("phase") == "gate":
             state = r.get("state") or {}
             cmd = state.get("proposed_command")
@@ -90,15 +91,11 @@ def deny_list_check(rows: list[dict]) -> list[str]:
 def gate_rows_table(rows: list[dict]) -> list[str]:
     """Per-engine verdict split over gate-phase decision rows, joined to
     outcome rows for approval quality."""
-    outcomes: dict[str, dict] = {}
-    for r in rows:
-        if r.get("type") == "outcome" and r.get("call_id"):
-            outcomes.setdefault(r["call_id"], r)
-
+    status = {r["call_id"]: r.get("status") for r in rows if r.get("type") == "verdict" and r.get("call_id")}
     lines = ["-- gate ask rows (phase=gate) per engine --"]
     per_engine: dict[str, list[dict]] = {}
     for r in rows:
-        if r.get("type") == "decision" and r.get("phase") == "gate" and not r.get("shadow_of"):
+        if r.get("type") == "decision" and r.get("phase") == "gate" and not r["scope"].get("shadow_of"):
             per_engine.setdefault(r["engine"], []).append(r)
     for engine, grows in sorted(per_engine.items()):
         threshold = current_profile(engine).gate_threshold
@@ -112,8 +109,7 @@ def gate_rows_table(rows: list[dict]) -> list[str]:
                 continue
             verdict = "approved" if noul >= threshold else "needs_approval"
             verdicts[verdict] += 1
-            outcome = outcomes.get(g["call_id"])
-            if outcome and verdict == "approved" and outcome.get("verification") == "failed":
+            if verdict == "approved" and status.get(g["call_id"]) == "failed":
                 false_approvals.append((g["call_id"], (g.get("state") or {}).get("proposed_command"), noul))
         mutating = verdicts["approved"] + verdicts["needs_approval"]
         esc_rate = verdicts["needs_approval"] / mutating if mutating else float("nan")
@@ -124,7 +120,7 @@ def gate_rows_table(rows: list[dict]) -> list[str]:
         )
         for call_id, cmd, noul in false_approvals:
             lines.append(f"  FALSE APPROVAL: {call_id} {cmd!r} noul={noul:.2f} -> verification=failed")
-    shadow = [r for r in rows if r.get("type") == "decision" and r.get("phase") == "gate" and r.get("shadow_of")]
+    shadow = [r for r in rows if r.get("type") == "decision" and r.get("phase") == "gate" and r["scope"].get("shadow_of")]
     answered = sum(1 for r in shadow if (r.get("answers") or {}).get("safe", {}).get("noul") is not None)
     lines.append(f"laya shadow gate rows: {len(shadow)} captured, {answered} with answers (the rest never finished in-run)")
 

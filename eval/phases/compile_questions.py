@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
 
-from jevdevice.journal.decision_log import DecisionJournal
+from jevdevice.journal import decision_log
 
 GOLDEN_PHASES = {"recall", "ground", "fill", "gate", "verify", "kind"}
 QUESTION_SETS_DIR = REPO / "src" / "jevdevice" / "question_sets"
@@ -113,13 +113,13 @@ def validate_journal_rows(templates: dict[str, str], coverage: dict[str, str] | 
     `coverage` is the union over ALL frozen versions -- an instance that only a
     later version covers is not a miss (each family's wordings live in its own
     frozen artifact)."""
-
     witnesses: Counter = Counter()
     unmatched: Counter = Counter()
     notes: list[str] = []
-    journal = DecisionJournal()
+    journal = decision_log.get_journal()
     for row in journal.replay():
-        if row.get("type") != "decision" or row.get("shadow_of") or row.get("error") or not row.get("answers"):
+        if (row.get("type") != "decision" or row.get("error") or not row.get("answers")
+                or row["scope"].get("shadow_of")):
             continue
         phase = row.get("phase")
         if phase not in GOLDEN_PHASES:

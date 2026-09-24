@@ -280,26 +280,30 @@ def _row_in_window(row: dict, started: datetime, finished: datetime) -> bool:
         return False
 
 
+def _row_goal(row: dict) -> str | None:
+    return (row.get("scope") or {}).get("goal") if row["type"] == "decision" else row.get("goal")
+
+
 def extract_trajectories(journal, runs: list[dict]) -> tuple[list[dict], dict[str, dict]]:
     """Pure core of `report`: journal-only join of each run's rows (primary only,
     ts-windowed) into trajectories + per-run status. Testable without a device."""
-    from jevdevice.journal.decision_log import VERIFIED
-
+    rows = list(journal.replay())
+    verdicts = {r["call_id"]: r["status"] for r in rows if r.get("type") == "verdict"}
     trajectories = []
     per_run_status = {}
     for run in runs:
         started, finished = _ts_key(run["started_at"]), _ts_key(run["finished_at"])
         window_rows = [
-            row for row in journal.replay()
+            row for row in rows
             if row.get("type") in ("decision", "outcome")
-            and row.get("shadow_of") is None
-            and row.get("goal") == run["goal"]
+            and not (row.get("scope") or {}).get("shadow_of")
+            and _row_goal(row) == run["goal"]
             and _row_in_window(row, started, finished)
         ]
         outcomes = [r for r in window_rows if r.get("type") == "outcome"]
         per_run_status[run["run_id"]] = {
             "worker_status": run["status"],
-            "device_verified": any(r.get("verification") == VERIFIED for r in outcomes),
+            "device_verified": any(verdicts.get(r.get("call_id")) == "verified" for r in outcomes),
             "n_decisions": sum(1 for r in window_rows if r.get("type") == "decision"),
             "n_outcomes": len(outcomes),
         }
@@ -316,9 +320,9 @@ def extract_trajectories(journal, runs: list[dict]) -> tuple[list[dict], dict[st
 
 def cmd_report() -> dict:
     """Offline (journal-only) trajectory extraction + batch summary."""
-    from jevdevice.journal.decision_log import DecisionJournal
+    from jevdevice.journal.decision_log import get_journal
 
-    journal = DecisionJournal()
+    journal = get_journal()
     runs = _read_runs()
     trajectories, per_run_status = extract_trajectories(journal, runs)
     FLYWHEEL_DIR.mkdir(parents=True, exist_ok=True)

@@ -81,10 +81,10 @@ def _pct(values: list[float], p: float) -> float | None:
 
 
 def scorecard(worker_files: list[Path]) -> dict:
-    from jevdevice.journal.decision_log import DecisionJournal
+    from jevdevice.journal import decision_log
 
-    rows = list(DecisionJournal().replay())
-    primaries = [r for r in rows if r.get("type") == "decision" and r.get("shadow_of") is None]
+    rows = list(decision_log.get_journal().replay())
+    primaries = [r for r in rows if r.get("type") == "decision" and not r["scope"].get("shadow_of")]
 
     by_engine: dict[str, list[dict]] = {}
     for path in worker_files:
@@ -100,7 +100,7 @@ def scorecard(worker_files: list[Path]) -> dict:
     cards = {}
     for engine, runs in by_engine.items():
         goal_ids = {r["goal_id"] for r in runs}
-        decisions = [r for r in primaries if r.get("goal_id") in goal_ids and r.get("engine") == engine]
+        decisions = [r for r in primaries if r["scope"].get("goal_id") in goal_ids and r["engine"] == engine]
         per_goal: dict[str, int] = {}
         for r in decisions:
             per_goal[r["goal_id"]] = per_goal.get(r["goal_id"], 0) + 1

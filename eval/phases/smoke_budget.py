@@ -15,7 +15,7 @@ import json
 from jevdevice.actions.app_launch import launch_app_for_goal
 from jevdevice.budget import LAYA_PROFILE, NONE_OF_THESE
 from jevdevice.common import bootstrap
-from jevdevice.journal.decision_log import DecisionJournal, goal_id_for, goal_scope
+from jevdevice.journal.decision_log import get_journal, goal_id_for, goal_scope
 
 # Dev-split goals only (eval/goals.yaml); the held-out half is untouched.
 GOALS = [
@@ -48,13 +48,13 @@ async def main() -> None:
         }), flush=True)
     print("=== JOURNAL ROWS (this session's goals) ===")
     ids = {goal_id_for(goal) for goal in GOALS}
-    for row in DecisionJournal().replay():
-        if row.get("goal_id") in ids and row.get("type") == "decision":
+    for row in get_journal().replay():
+        if row.get("type") == "decision" and (row.get("scope") or {}).get("goal_id") in ids:
             print(json.dumps({
                 "engine": row.get("engine"), "phase": row.get("phase"),
                 "options_in_choice": _criteria_len(row),
                 "error": row.get("error"),
-                "usage": row.get("usage"),
+                "usage": (row.get("extra") or {}).get("usage"),
             }))
 
 
