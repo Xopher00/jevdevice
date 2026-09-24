@@ -28,7 +28,7 @@ dev = [
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
-# Local path source: typesymbolic is consumed AS COMMITTED (7271aaf) --
+# Local path source: typesymbolic is consumed AS COMMITTED (4e018bc) --
 # jevdevice never carries uncommitted expectations about it. Core changes it
 # needs go to its agent via TSYM-MIGRATION-REPORT.md, never into the repo.
 [tool.uv.sources]
