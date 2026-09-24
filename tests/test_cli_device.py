@@ -16,9 +16,10 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
 
 import pytest
+from typesymbolic.journal import Journal
+from typesymbolic.judge import ScriptedJudge
 from typesymbolic.question import Answer
 
 from jevdevice import question_sets
@@ -74,31 +75,26 @@ async def test_dump_hierarchy_is_a_plain_text_snapshot(cli_device: CliDevice) ->
 
 # --- the untouched engine degrades fail-closed on the second family -------------
 
-class _AbstainingJudge:
-    """Scripted ask(): the kind pick abstains over the phone-closed
-    ACTION_KINDS -- what EVERY CLI goal must do (fail-closed escalation)."""
-
-    name = "jev"
-    calls: ClassVar[list[dict]] = []
-
-    async def ask(self, state, questions, **kw):
-        self.calls.append({"state": state, "questions": questions, **kw})
-        return {
-            "kind": Answer.from_choice(qid="", choice="none_of_these",
-                                 probabilities={"none_of_these": 0.9}, confidence=0.9),
-            "any_fit": Answer.from_noul(qid="", noul=0.1),
-        }
+def _abstaining_judge() -> ScriptedJudge:
+    """The kind pick abstains over the phone-closed ACTION_KINDS -- what EVERY
+    CLI goal must do (fail-closed escalation)."""
+    return ScriptedJudge([{
+        "kind": Answer.from_choice(qid="", choice="none_of_these",
+                             probabilities={"none_of_these": 0.9}, confidence=0.9),
+        "any_fit": Answer.from_noul(qid="", noul=0.1),
+    }])
 
 
 async def test_pick_kind_degrades_to_ungrounded_then_escalates(cli_device: CliDevice) -> None:
-    judge = _AbstainingJudge()
+    judge = _abstaining_judge()
     pick = await pick_kind(judge, "What is the CPU temperature right now?", cli_device, verbose=False)
     # The engine asked with the UNGROUNDED compiled wording: the CLI snapshot
     # is not a UI tree, so screen grounding degraded (fail-closed) instead of
     # lying about a screen.
     assert len(judge.calls) == 1
-    assert judge.calls[0]["questions"]["kind"].instructions == question_sets.text("kind.pick")
-    assert "screen" not in judge.calls[0]["state"]
+    state, questions = judge.calls[0]
+    assert questions["kind"].instructions == question_sets.text("kind.pick")
+    assert "screen" not in state
     # And the phone-closed vocabulary abstains: escalate, never guess.
     assert pick.kind is None
     assert any("abstained" in reason for reason in pick.reasons)
@@ -112,20 +108,6 @@ if str(PHASES_DIR) not in sys.path:
 import cli_family
 
 
-class _ScriptedJudge:
-    """Pops one answers payload per ask() (the established fake-judge shape)."""
-
-    name = "jev"
-
-    def __init__(self, payloads: list[dict]) -> None:
-        self.payloads = list(payloads)
-        self.calls: list[dict] = []
-
-    async def ask(self, state, questions, **kw):
-        self.calls.append({"state": state, "questions": questions, **kw})
-        return self.payloads.pop(0)
-
-
 class _StubCliTransport:
     """Records run() calls without executing -- proves pending never executes."""
 
@@ -137,21 +119,13 @@ class _StubCliTransport:
         return SimpleNamespace(stdout="6.8.0-generic\n", stderr="", exit_code=0)
 
 
-class _RecordingJournal:
-    def __init__(self) -> None:
-        self.outcomes: list[dict] = []
-
-    def record_outcome(self, **row) -> None:
-        self.outcomes.append(row)
-
-
 @pytest.fixture()
-def journal_recorder(monkeypatch):
+def journal_recorder(monkeypatch, tmp_path: Path) -> Journal:
     from jevdevice.journal import decision_log
 
-    live = _RecordingJournal()
-    monkeypatch.setattr(decision_log, "get_journal", lambda: live)
-    return live
+    journal = Journal(root=tmp_path, rotation="daily", background_writes=False)
+    monkeypatch.setattr(decision_log, "get_journal", lambda: journal)
+    return journal
 
 
 @pytest.fixture()
@@ -173,9 +147,9 @@ def _pick_payload(choice: str) -> dict:
 
 
 async def test_run_probe_end_to_end_through_the_untouched_engine(
-    cli_device: CliDevice, journal_recorder: _RecordingJournal, question_set_v2,
+    cli_device: CliDevice, journal_recorder: Journal, question_set_v2,
 ) -> None:
-    judge = _ScriptedJudge([
+    judge = ScriptedJudge([
         _pick_payload("uname -r"),                          # the closed-set pick
         {"safe": Answer.from_noul(qid="", noul=0.9)},        # the gate ask
         {"satisfied": Answer.from_noul(qid="", noul=0.9)},   # the verify ask
@@ -184,21 +158,25 @@ async def test_run_probe_end_to_end_through_the_untouched_engine(
         judge, cli_device, "What kernel version is running?", ["uname -r"], verbose=False)
     assert response["status"] == "ok" and response["exit_code"] == 0
     # three real asks: the closed-set pick, the safety gate, the verification
-    assert [next(iter(c["questions"])) for c in judge.calls] == ["pick", "safe", "satisfied"]
-    assert judge.calls[1]["questions"]["safe"].instructions == question_sets.text("cli.safe")
-    # one outcome row, joined to the gate decision by its call_id, device column = the CLI family
-    assert len(journal_recorder.outcomes) == 1
-    row = journal_recorder.outcomes[0]
+    assert [next(iter(questions)) for _state, questions in judge.calls] == ["pick", "safe", "satisfied"]
+    assert judge.calls[1][1]["safe"].instructions == question_sets.text("cli.safe")
+    # one outcome row, joined to its verdict by call_id, device column = the CLI family
+    rows = list(journal_recorder.replay())
+    outcome_rows = [r for r in rows if r["type"] == "outcome"]
+    verdict_rows = [r for r in rows if r["type"] == "verdict"]
+    assert len(outcome_rows) == 1
+    row = outcome_rows[0]
     assert row["device"].startswith("cli:")
     assert row["kind"] == "cli_probe"
-    assert row["verification"] == "verified"
-    assert row["call_id"] == judge.calls[1]["call_id"]
+    assert len(verdict_rows) == 1
+    assert verdict_rows[0]["status"] == "verified"
+    assert verdict_rows[0]["call_id"] == row["call_id"]
 
 
 async def test_run_probe_never_auto_approves(
-    journal_recorder: _RecordingJournal, question_set_v2,
+    journal_recorder: Journal, question_set_v2,
 ) -> None:
-    judge = _ScriptedJudge([
+    judge = ScriptedJudge([
         _pick_payload("uname -r"),
         {"safe": Answer.from_noul(qid="", noul=0.3)},  # below the gate threshold
     ])
@@ -208,4 +186,6 @@ async def test_run_probe_never_auto_approves(
         judge, device, "What kernel version is running?", ["uname -r"], verbose=False)
     assert response["status"] == "escalated"
     assert stub.ran == []  # the pending verdict NEVER executes
-    assert journal_recorder.outcomes[0]["verification"] == "escalated"
+    rows = list(journal_recorder.replay())
+    verdict_rows = [r for r in rows if r["type"] == "verdict"]
+    assert len(verdict_rows) == 1 and verdict_rows[0]["status"] == "escalated"

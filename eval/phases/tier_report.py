@@ -38,7 +38,7 @@ def report(journal) -> dict:
             tier_events[tier][status] += 1
             if row.get("goal"):
                 goals_seen.add((row["goal"], status))
-        elif row.get("key"):
+        elif row.get("kind"):
             step_outcomes[tier][verdicts.get(row.get("call_id")) or "none"] += 1
     return {
         "tiers": {

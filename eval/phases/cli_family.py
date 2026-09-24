@@ -33,6 +33,7 @@ from jevdevice import question_sets
 from jevdevice.budget import current_profile
 from jevdevice.common import bootstrap
 from jevdevice.device import CliDevice, Device
+from jevdevice.jev import ask as jev_ask
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import goal_scope
 from jevdevice.judge.gate import (
@@ -114,7 +115,7 @@ def dev_pc_goals() -> list[dict]:
 async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, verbose: bool = True) -> dict:
     """One goal -> one gated probe command through the untouched engine spine.
     A needs_approval verdict NEVER executes here (fail-closed escalation)."""
-    profile = current_profile(jev.engine_name)
+    profile = current_profile(jev.name)
     with goal_scope(goal):
         proposal = await propose_from_closed_set(
             jev, goal,
@@ -127,19 +128,20 @@ async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, ve
             gate_instructions=question_sets.text("cli.safe"),
             verbose=verbose,
         )
-        call_id = proposal.gate_result.call_id if proposal.gate_result else None
+        call_id = proposal.pick_call_id or (proposal.gate_result.call_id if proposal.gate_result else None)
         if proposal.pending is not None:  # the human decides; unattended runs count this as a failure
-            outcomes.record_action(device=device, call_id=call_id, key=KIND_CLI_PROBE,
+            outcomes.record_action(device=device, call_id=call_id, key="pick", kind=KIND_CLI_PROBE,
                                    response={"status": "escalated"}, reasons=proposal.reasons)
             return {"status": "escalated", "reasons": ("needs_approval",), "command": None}
         if proposal.ready is None:
-            outcomes.record_action(device=device, call_id=call_id, key=KIND_CLI_PROBE,
+            outcomes.record_action(device=device, call_id=call_id, key="pick", kind=KIND_CLI_PROBE,
                                    response={"status": "escalated"}, reasons=proposal.reasons)
             return {"status": "escalated", "reasons": proposal.reasons, "command": None}
 
         command = proposal.ready
         result = await device.run(command.command)
-        verify_answer = await jev.ask(
+        _, verify_answer = await jev_ask(
+            jev,
             {"goal": goal, "probe_output": result.stdout[: profile.probe_max_chars],
              "exit_code": result.exit_code},
             {"satisfied": question_sets.noul("cli.satisfied")},
@@ -152,7 +154,7 @@ async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, ve
             "satisfied": satisfied,
             "reasons": [] if result.exit_code == 0 else [f"exit {result.exit_code}"],
         }
-        outcomes.record_action(device=device, call_id=call_id, key=KIND_CLI_PROBE,
+        outcomes.record_action(device=device, call_id=call_id, key="pick", kind=KIND_CLI_PROBE,
                                executed_command=command.command, response=response)
         return {**response, "command": command.command}
 
@@ -212,7 +214,7 @@ async def gate_check(jev) -> list[dict]:
         print(f"\nlabels asked: {len(asked)} (safe p50 "
               f"{sorted(safe)[len(safe)//2] if safe else float('nan'):.2f}, unsafe max "
               f"{max(unsafe) if unsafe else float('nan'):.2f}, threshold "
-              f"{current_profile(jev.engine_name).gate_threshold})")
+              f"{current_profile(jev.name).gate_threshold})")
         if len(asked) < 20:
             print(f"n={len(asked)} < 20 labels -- no refit; keep collecting "
                   "(auto-thresholds need precision >= 0.95 at n >= 20)")
@@ -357,7 +359,7 @@ async def cmd_run(goal_id: str | None, timeout_s: float) -> int:
 async def cmd_gate_check() -> int:
     jev, _ = make_client_and_device()
     rows = await gate_check(jev)
-    print(f"captures appended: {append_gate_captures(rows, jev.engine_name)}")
+    print(f"captures appended: {append_gate_captures(rows, jev.name)}")
     return 0
 
 
