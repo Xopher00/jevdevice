@@ -28,7 +28,7 @@ from jevdevice.execution.dispatch import (
     run_kind,
 )
 from jevdevice.journal import outcomes
-from jevdevice.journal.decision_log import ESCALATED, NONE, goal_scope
+from jevdevice.journal.decision_log import goal_scope
 from jevdevice.judge.gate import CommandVariant, Pending
 
 from .common import bootstrap
@@ -74,10 +74,10 @@ def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: flo
 
 
 def _emit_outcome(**kw) -> None:
-    """Outcome-row emission bound to this server's device (outcomes.emit_outcome
+    """Act/Verify journaling bound to this server's device (outcomes.record_action
     does the work; journaling is fail-open). Stays named `transport`: a test
     reads mcp_server.transport.serial."""
-    outcomes.emit_outcome(device=transport, **kw)
+    outcomes.record_action(device=transport, **kw)
 
 
 @dataclass
@@ -114,7 +114,7 @@ async def device_do(
         kind_pick = await pick_kind(jev, goal, transport, verbose=False)
         kind = kind_pick.kind
         if kind is None:
-            _emit_outcome(call_id=kind_pick.call_id, verification=ESCALATED, status="escalated")
+            _emit_outcome(call_id=kind_pick.call_id, response={"status": "escalated"})
             return await _with_screenshot({"status": "escalated", "reasons": list(kind_pick.reasons)}, include=include_screenshot)
         include = include_screenshot or kind in ATTACHES_RESULT
         response = await run_kind(
@@ -142,7 +142,7 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         return await _with_screenshot({"status": "error", "reason": f"unknown or already-resolved thread_id {thread_id!r}"}, include=include_screenshot)
     with goal_scope(action.goal):
         if decision != "approve":
-            _emit_outcome(call_id=action.call_id, verification=NONE, status="not_executed", decision="deny", kind=action.kind)
+            _emit_outcome(call_id=action.call_id, key=action.kind, gate=action.pending.gate_result, status="not_executed", decision="deny")
             return await _with_screenshot({"status": "not_executed"}, include=include_screenshot)
 
         approved = action.pending.command
@@ -160,10 +160,9 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         after = await outcomes.foreground_safe(transport)
         graph_edge = {"from_node": before, "to_node": after} if (before or after) else None
         _emit_outcome(
-            call_id=action.call_id, executed_command=approved.command,
-            verification=outcomes.verification_from_response(response), response=response,
+            call_id=action.call_id, key=action.kind, gate=action.pending.gate_result,
+            executed_command=approved.command, response=response,
             recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
-            kind=action.kind,
         )
         return await _with_screenshot(response, include=include_screenshot)
 

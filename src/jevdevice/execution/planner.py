@@ -29,7 +29,7 @@ from jevdevice.actions.elements import describe_screen, dump_screen, screen_summ
 from jevdevice.budget import current_profile
 from jevdevice.jev import ask
 from jevdevice.journal import outcomes
-from jevdevice.journal.decision_log import NONE, VERIFIED, goal_id_for, goal_scope
+from jevdevice.journal.decision_log import goal_id_for, goal_scope
 
 from .dispatch import pick_kind, run_kind
 from .recipes import Recipe, RecipeStore
@@ -72,12 +72,11 @@ async def run_kind_unattended(
 ) -> StepResult:
     """One action through the shared dispatch, with no approval hook."""
     response = await run_kind(jev, device, kind, goal, tier=tier, recipe_id=recipe_id)
-    return StepResult(kind, goal, outcomes.verification_from_response(response))
+    return StepResult(kind, goal, outcomes.verdict_from_response(response).status)
 
 
 def _planner_row(status: str, *, tier: int, recipe_id: str | None = None, reasons=None) -> None:
-    outcomes.emit_outcome(verification=NONE, status=status, tier=tier,
-                         recipe_id=recipe_id, reasons=list(reasons or ()))
+    outcomes.record_action(status=status, tier=tier, recipe_id=recipe_id, reasons=list(reasons or ()))
 
 
 async def _replay_chain(
@@ -136,7 +135,7 @@ async def _stepwise_loop(jev, device, goal: str, *, executor) -> tuple[list[Step
             continue
         result = await executor(jev, device, pick.kind, goal, tier=2)
         results.append(result)
-        if result.status == VERIFIED and result.kind in OUTPUT_VERIFIED_KINDS:
+        if result.status == "verified" and result.kind in OUTPUT_VERIFIED_KINDS:
             # The verified read answered the goal from device output; the
             # screen-only done-check cannot observe it, so recognize it here
             # instead of looping on an unchanged screen.

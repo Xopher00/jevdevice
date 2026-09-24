@@ -31,7 +31,9 @@ from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 
-from jevdevice.journal import decision_log
+from typesymbolic.journal import OUTCOME
+from typesymbolic.labels import VERDICT
+
 from jevdevice.question_sets import load as load_question_set
 
 DEFAULT_RECIPES_DIR = Path.home() / ".jevdevice" / "recipes"
@@ -104,13 +106,11 @@ class Recipe:
 
 # --- journal -> recipes (dead-end/backtracking removal) ------------------------
 
-def _final_chain(rows: list[dict]) -> list[dict]:
+def _final_chain(rows: list[dict], verdict_status: dict[str, str]) -> list[dict]:
     """The final run's rows: everything in the last session-window that closes
-    with a verified outcome. Rows farther apart than MAX_CHAIN_GAP_S are
-    separate runs, so an old session's chain never pollutes today's; within the
-    window, failed/escalated rows are the journey (dropped downstream) and only
-    the verified steps can enter the chain."""
-    final = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].get("verification") == decision_log.VERIFIED), None)
+    with a verified outcome (`verdict_status`: call_id -> the joined verdict
+    row's status). Rows farther apart than MAX_CHAIN_GAP_S are separate runs."""
+    final = next((i for i in range(len(rows) - 1, -1, -1) if verdict_status.get(rows[i].get("call_id")) == "verified"), None)
     if final is None:
         return []
     start = 0
@@ -144,10 +144,13 @@ def recipes_from_journal(
     recipe is training data and the dev/held-out split must hold.
     `rows`: pass an already-materialized `journal.replay()` to skip a second
     full replay when the caller also calls verify_recipe right after."""
+    rows = list(rows if rows is not None else journal.replay())
+    verdicts = (r for r in rows if r.get("type") == VERDICT and r.get("call_id"))
+    verdict_status = {r["call_id"]: r.get("status") for r in verdicts}
     by_goal: dict[str, list[dict]] = {}
     goal_text: dict[str, str] = {}
-    for row in rows if rows is not None else journal.replay():
-        if row.get("type") != decision_log.OUTCOME or not row.get("goal_id"):
+    for row in rows:
+        if row.get("type") != OUTCOME or not row.get("goal_id"):
             continue
         goal_id = row["goal_id"]
         by_goal.setdefault(goal_id, []).append(row)
@@ -160,17 +163,17 @@ def recipes_from_journal(
     for goal_id, goal_rows in by_goal.items():
         chain = [
             RecipeStep(
-                kind=row["kind"], goal=row.get("goal") or goal_text.get(goal_id, ""),
+                kind=row["key"], goal=row.get("goal") or goal_text.get(goal_id, ""),
                 command=row.get("executed_command"),
                 from_node=(row.get("graph_edge") or {}).get("from_node"),
                 to_node=(row.get("graph_edge") or {}).get("to_node"),
                 call_id=row.get("call_id"),
             )
-            for row in _final_chain(goal_rows)
+            for row in _final_chain(goal_rows, verdict_status)
             # device-verified steps only: dead ends (failed/escalated/unconfirmed
             # attempts) are the journey, not the chain
-            if row.get("verification") == decision_log.VERIFIED
-            and row.get("kind")
+            if verdict_status.get(row.get("call_id")) == "verified"
+            and row.get("key")
             and (row.get("executed_command") or row.get("graph_edge"))
         ]
         chain = [step for step in _compress(chain) if step.kind]
@@ -187,14 +190,11 @@ def recipes_from_journal(
 
 def verify_recipe(recipe: Recipe, journal, *, rows: list[dict] | None = None) -> bool:
     """A stored recipe replays to its verified outcome: every step's call_id
-    must exist in the journal as a VERIFIED outcome row (missing/failed steps
-    mean the recipe drifted from device truth and must be re-captured).
-    `rows`: see recipes_from_journal -- pass the same materialized replay to
-    avoid a second full journal scan."""
+    must carry a verified Verdict row. `rows`: see recipes_from_journal."""
     verified_call_ids = {
         row.get("call_id")
         for row in (rows if rows is not None else journal.replay())
-        if row.get("type") == decision_log.OUTCOME and row.get("verification") == decision_log.VERIFIED
+        if row.get("type") == VERDICT and row.get("status") == "verified"
     }
     return all(step.call_id in verified_call_ids for step in recipe.steps if step.call_id)
 

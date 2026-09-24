@@ -42,7 +42,7 @@ from jevdevice.common import bootstrap, gated
 from jevdevice.device import Device
 from jevdevice.jev import JudgeEngine, ask
 from jevdevice.journal import outcomes
-from jevdevice.journal.decision_log import ESCALATED, goal_scope
+from jevdevice.journal.decision_log import goal_scope
 from jevdevice.judge.gate import CommandVariant, confirm_with_human
 
 # pick_kind() picks exactly one of these per goal; sequencing multi-step goals is the caller's job.
@@ -348,21 +348,19 @@ async def _run_ungated(
         # that device truth instead of paying a second dump when it ran.
         after = result.package if result.launched and result.package else await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
-        outcomes.emit_outcome(
-            device=device, call_id=result.call_id,
+        outcomes.record_action(
+            device=device, call_id=result.call_id, key=kind,
             executed_command=f"monkey -p {result.package} 1" if result.package else None,
-            verification=outcomes.verification_from_response(response), response=response,
-            kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
+            response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
         return response
     if kind == "dumpsys":
         result = await run_dumpsys_query(jev, device, goal, verbose=False)
         response = response_for(kind, result, jev.name)
-        outcomes.emit_outcome(
-            device=device, call_id=result.call_id,
+        outcomes.record_action(
+            device=device, call_id=result.call_id, key=kind,
             executed_command=f"dumpsys {result.service}" if result.service else None,
-            verification=outcomes.verification_from_response(response), response=response,
-            kind=kind, tier=tier, recipe_id=recipe_id,
+            response=response, tier=tier, recipe_id=recipe_id,
         )
         return response
     if kind == "scroll_to_find":
@@ -371,19 +369,17 @@ async def _run_ungated(
         response = response_for(kind, result, jev.name)
         after = await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
-        outcomes.emit_outcome(
-            device=device, call_id=result.call_id,
-            executed_command=result.executed[-1] if result.executed else None,
-            verification=outcomes.verification_from_response(response), response=response,
-            executed=list(result.executed), kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
+        outcomes.record_action(
+            device=device, call_id=result.call_id, key=kind,
+            executed_command=result.executed[-1] if result.executed else None, response=response,
+            executed=list(result.executed), graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
         return {**response, "executed": list(result.executed)}
     if kind == "screenshot":
         response = {"status": "ok"}
-        outcomes.emit_outcome(
-            device=device, call_id=None, executed_command="screencap -p",
-            verification=outcomes.verification_from_response(response), response=response,
-            kind=kind, tier=tier, recipe_id=recipe_id,
+        outcomes.record_action(
+            device=device, call_id=None, key=kind, executed_command="screencap -p",
+            response=response, tier=tier, recipe_id=recipe_id,
         )
         return response
     raise KeyError(f"not an ungated kind: {kind!r}")
@@ -418,8 +414,9 @@ async def run_kind(
         if auto_approve:
             command = proposal.pending.command
         elif on_pending is not None:
-            outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
-                                  status="needs_approval", kind=kind, tier=tier, recipe_id=recipe_id)
+            outcomes.record_action(device=device, call_id=call_id, key=kind, status="needs_approval",
+                                   gate=getattr(proposal, "gate_result", None), tier=tier,
+                                   recipe_id=recipe_id)
             # The hook contract (type hint above) admits sync and async alike:
             # the MCP server parks a pending action synchronously, so the
             # hook's return is awaited only when it is actually awaitable.
@@ -427,17 +424,16 @@ async def run_kind(
                                 getattr(proposal, "confidence", 0.0), proposal.pending, verify)
             return await hooked if inspect.isawaitable(hooked) else hooked
     if command is None:
-        outcomes.emit_outcome(device=device, call_id=call_id, verification=ESCALATED,
-                              status="escalated", kind=kind, tier=tier, recipe_id=recipe_id)
+        outcomes.record_action(device=device, call_id=call_id, key=kind, response={"status": "escalated"},
+                               gate=getattr(proposal, "gate_result", None), tier=tier, recipe_id=recipe_id)
         return {"status": "escalated", "reasons": list(proposal.reasons)}
     outcome, edge = await outcomes.graph_edge_around(
         device, lambda: handler.execute(jev, device, goal, proposal, command, verify=verify, verbose=False),
     )
     response = response_for(kind, outcome, jev.name)
-    outcomes.emit_outcome(
-        device=device, call_id=call_id, executed_command=command.command,
-        verification=outcomes.verification_from_response(response), response=response,
-        kind=kind, graph_edge=edge, tier=tier, recipe_id=recipe_id,
+    outcomes.record_action(
+        device=device, call_id=call_id, key=kind, gate=getattr(proposal, "gate_result", None),
+        executed_command=command.command, response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
     )
     if kind in ("tap", "long_press", "type_text"):
         response = {**response, "elapsed_s": round(time.monotonic() - t0, 2)}

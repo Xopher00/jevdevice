@@ -19,11 +19,11 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+from typesymbolic.question import Answer
 
 from jevdevice import question_sets
 from jevdevice.device import CLI_SNAPSHOT_COMMAND, CliDevice, Device
 from jevdevice.execution.dispatch import pick_kind
-from jevdevice.jev import ChoiceAnswer, NoulAnswer
 
 
 @pytest.fixture()
@@ -78,15 +78,15 @@ class _AbstainingJudge:
     """Scripted ask(): the kind pick abstains over the phone-closed
     ACTION_KINDS -- what EVERY CLI goal must do (fail-closed escalation)."""
 
-    engine_name = "jev"
+    name = "jev"
     calls: ClassVar[list[dict]] = []
 
     async def ask(self, state, questions, **kw):
         self.calls.append({"state": state, "questions": questions, **kw})
         return {
-            "kind": ChoiceAnswer(type="choice", choice="none_of_these",
+            "kind": Answer.from_choice(qid="", choice="none_of_these",
                                  probabilities={"none_of_these": 0.9}, confidence=0.9),
-            "any_fit": NoulAnswer(type="noul", noul=0.1),
+            "any_fit": Answer.from_noul(qid="", noul=0.1),
         }
 
 
@@ -115,7 +115,7 @@ import cli_family
 class _ScriptedJudge:
     """Pops one answers payload per ask() (the established fake-judge shape)."""
 
-    engine_name = "jev"
+    name = "jev"
 
     def __init__(self, payloads: list[dict]) -> None:
         self.payloads = list(payloads)
@@ -166,9 +166,9 @@ def question_set_v2(monkeypatch):
 
 def _pick_payload(choice: str) -> dict:
     return {
-        "pick": ChoiceAnswer(type="choice", choice=choice,
+        "pick": Answer.from_choice(qid="", choice=choice,
                              probabilities={choice: 0.9}, confidence=0.9),
-        "any_fit": NoulAnswer(type="noul", noul=0.9),
+        "any_fit": Answer.from_noul(qid="", noul=0.9),
     }
 
 
@@ -177,8 +177,8 @@ async def test_run_probe_end_to_end_through_the_untouched_engine(
 ) -> None:
     judge = _ScriptedJudge([
         _pick_payload("uname -r"),                          # the closed-set pick
-        {"safe": NoulAnswer(type="noul", noul=0.9)},        # the gate ask
-        {"satisfied": NoulAnswer(type="noul", noul=0.9)},   # the verify ask
+        {"safe": Answer.from_noul(qid="", noul=0.9)},        # the gate ask
+        {"satisfied": Answer.from_noul(qid="", noul=0.9)},   # the verify ask
     ])
     response = await cli_family.run_probe(
         judge, cli_device, "What kernel version is running?", ["uname -r"], verbose=False)
@@ -200,7 +200,7 @@ async def test_run_probe_never_auto_approves(
 ) -> None:
     judge = _ScriptedJudge([
         _pick_payload("uname -r"),
-        {"safe": NoulAnswer(type="noul", noul=0.3)},  # below the gate threshold
+        {"safe": Answer.from_noul(qid="", noul=0.3)},  # below the gate threshold
     ])
     stub = _StubCliTransport()
     device = CliDevice(stub)

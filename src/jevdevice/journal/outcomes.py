@@ -1,16 +1,16 @@
-"""Shared outcome-row emission for every flow that runs a real action (the
-MCP server, the planner): one journaling path instead of per-caller copies
-that drift.
+"""Shared Act/Verify journaling for every flow that runs a real action (the MCP
+server, the planner): one path through core's `record_outcome`/`record_verdict`.
 
 A `graph_edge` records the foreground app before and after an action -- the
-unit stored-recipe chains are built from. It costs two screen dumps, so it
-is knob-gated (JEV_GRAPH_EDGE, default on) and telemetry-only: a failed
-dump yields None and never fails the action it observes.
+unit stored-recipe chains are built from. Knob-gated (JEV_GRAPH_EDGE, default
+on) and telemetry-only: a failed dump yields None, never fails the action.
 """
 
 from __future__ import annotations
 
 import os
+
+from typesymbolic.domain import ActOutcome, ActStep, Verdict
 
 from jevdevice.actions.elements import dump_screen, foreground_package
 from jevdevice.device import Device
@@ -23,19 +23,6 @@ GRAPH_EDGE_DEFAULT = True
 
 def graph_edge_enabled() -> bool:
     return os.environ.get(ENV_GRAPH_EDGE, "1" if GRAPH_EDGE_DEFAULT else "0").strip().lower() not in {"0", "off", "false", "no"}
-
-
-def verification_from_response(response: dict) -> str:
-    """The flow's own status -> journal verification. ok = verified; a non-zero
-    exit is an outright failure; anything else that ran is unconfirmed (none)."""
-    status = response.get("status")
-    if status == "ok":
-        return decision_log.VERIFIED
-    if status == "escalated":
-        return decision_log.ESCALATED
-    if response.get("exit_code") not in (None, 0):
-        return decision_log.FAILED
-    return decision_log.NONE
 
 
 async def foreground_safe(device: Device) -> str | None:
@@ -59,33 +46,51 @@ async def graph_edge_around(device: Device, run) -> tuple:
     return outcome, edge
 
 
-def emit_outcome(
-    *, device: Device | None = None, call_id: str | None = None, executed_command: str | None = None,
-    verification: str = decision_log.NONE, status: str | None = None, response: dict | None = None,
-    recovery_command: str | None = None, graph_edge: dict | None = None,
-    decision: str | None = None, executed: list | None = None,
-    kind: str | None = None, tier: int | None = None, recipe_id: str | None = None,
-    reasons=None,
-) -> None:
-    """Fire-and-forget outcome row. `response`, when given, supplies the
-    status/reasons/exit_code/satisfied fields verbatim (explicit `reasons`
-    wins); `kind` names the action kind that ran; `tier`/`recipe_id` appear
-    only on planner-driven rows. The journal's `device` column comes from
-    Device.name (the protocol's journal identity), so rows from a second
-    device family separate without engine changes."""
-    exit_code = satisfied = None
+def verdict_from_response(response: dict, *, key: str | None = None) -> Verdict:
+    """The flow's own status -> a device Verdict; `key` is the pick key, never the `safe` gate noul."""
+    status = response.get("status")
+    if status == "ok":
+        result = "verified"
+    elif status == "escalated":
+        result = "escalated"
+    elif response.get("exit_code") not in (None, 0):
+        result = "failed"
+    else:
+        result = "unconfirmed"
+    return Verdict(status=result, tests=(key,) if key else ())
+
+
+def record_action(
+    *, device: Device | None = None, call_id: str | None = None, key: str | None = None,
+    gate=None, response: dict | None = None, executed_command: str | None = None,
+    executed: list | None = None, recovery_command: str | None = None,
+    graph_edge: dict | None = None, decision: str | None = None, status: str | None = None,
+    tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None,
+) -> Verdict | None:
+    """Journal one Act (`record_outcome`, `key` = the kind/element pick key) and,
+    given a device `response`, the Verdict it implies (`record_verdict`), both
+    on `call_id`. `executed` -> one ActStep per command. Returns the Verdict."""
+    satisfied = exit_code = None
     if response is not None:
         status = response.get("status", status)
-        exit_code = response.get("exit_code")
-        satisfied = response.get("satisfied")
-        if reasons is None:
-            reasons = response.get("reasons")
+        satisfied, exit_code = response.get("satisfied"), response.get("exit_code")
+        reasons = reasons if reasons is not None else response.get("reasons")
+    verdict = verdict_from_response(response, key=key) if response is not None else None
+    succeeded = succeeded if succeeded is not None else bool(verdict and verdict.status == "verified")
     goal_id, goal = decision_log.current_goal()
-    decision_log.get_journal().record_outcome(
-        call_id=call_id, executed_command=executed_command, verification=verification,
-        status=status, recovery_command=recovery_command, graph_edge=graph_edge,
-        device=getattr(device, "name", None) if device is not None else None, decision=decision,
-        reasons=reasons, exit_code=exit_code, satisfied=satisfied,
-        goal=goal, goal_id=goal_id, executed=executed,
-        kind=kind, tier=tier, recipe_id=recipe_id,
+    outcome = ActOutcome(
+        succeeded=succeeded, key=key, reasons=tuple(reasons or ()),
+        steps=tuple(ActStep(name=command, succeeded=True) for command in (executed or ())),
     )
+    extra = {k: v for k, v in {
+        "device": getattr(device, "name", None) if device is not None else None,
+        "goal": goal, "goal_id": goal_id, "executed_command": executed_command,
+        "recovery_command": recovery_command, "graph_edge": graph_edge, "decision": decision,
+        "status": status, "tier": tier, "recipe_id": recipe_id,
+        "satisfied": satisfied, "exit_code": exit_code,
+    }.items() if v is not None}
+    journal = decision_log.get_journal()
+    journal.record_outcome(call_id=call_id, gate=gate, outcome=outcome, extra=extra or None)
+    if verdict:
+        journal.record_verdict(call_id=call_id, verdict=verdict)
+    return verdict

@@ -32,17 +32,23 @@ os.environ.setdefault("ANDROID_SERIAL", "placeholder-for-import")
 
 
 class RecordingJournal:
-    """Test double with the core Journal's record_* shape."""
+    """Test double with the core Journal's record_* shape; record_outcome
+    flattens `extra` into the row like the real Journal does."""
 
     def __init__(self) -> None:
         self.decisions: list[dict] = []
         self.outcomes: list[dict] = []
+        self.verdicts: list[dict] = []
 
     def record_decision(self, **row) -> None:
         self.decisions.append(row)
 
-    def record_outcome(self, **row) -> None:
-        self.outcomes.append(row)
+    def record_outcome(self, *, key=None, outcome=None, extra=None, **row) -> None:
+        row = {**row, "outcome": outcome, "key": key if key is not None else getattr(outcome, "key", None)}
+        self.outcomes.append({**row, **(extra or {})})
+
+    def record_verdict(self, **row) -> None:
+        self.verdicts.append(row)
 
 
 def _ok_response(**extra) -> httpx2.Response:
@@ -157,8 +163,7 @@ def test_every_ask_call_site_carries_a_phase_label() -> None:
     assert not offenders, f"ask() call sites missing phase= label: {offenders}"
 
 
-# --- outcome-row helpers (left for agent 2c: decision_log.NONE/VERIFIED, ----
-# --- outcomes.py, and mcp_server's outcome emission aren't migrated yet) ----
+# --- outcome/verdict-row helpers, migrated onto core record_outcome/record_verdict --
 
 def test_pending_action_carries_the_gate_call_id() -> None:
     from jevdevice import mcp_server
@@ -178,12 +183,12 @@ def test_pending_action_carries_the_gate_call_id() -> None:
 
 
 def test_verification_mapping_from_response_status() -> None:
-    from jevdevice.journal.outcomes import verification_from_response
-    assert verification_from_response({"status": "ok"}) == "verified"
-    assert verification_from_response({"status": "escalated"}) == "escalated"
-    assert verification_from_response({"status": "unverified", "exit_code": 1}) == "failed"
-    assert verification_from_response({"status": "unverified", "exit_code": 0}) == "none"
-    assert verification_from_response({"status": "unverified"}) == "none"
+    from jevdevice.journal.outcomes import verdict_from_response
+    assert verdict_from_response({"status": "ok"}).status == "verified"
+    assert verdict_from_response({"status": "escalated"}).status == "escalated"
+    assert verdict_from_response({"status": "unverified", "exit_code": 1}).status == "failed"
+    assert verdict_from_response({"status": "unverified", "exit_code": 0}).status == "unconfirmed"
+    assert verdict_from_response({"status": "unverified"}).status == "unconfirmed"
 
 
 def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None:
@@ -191,14 +196,12 @@ def test_emit_outcome_writes_a_row_joined_to_the_goal_scope(monkeypatch) -> None
 
     recorder = RecordingJournal()
     monkeypatch.setattr(decision_log, "_default_journal", recorder)
-    from jevdevice.journal.outcomes import verification_from_response
     with goal_scope("press 7"):
         response = {"status": "ok", "satisfied": 0.97}
         mcp_server._emit_outcome(call_id="cid-gate", executed_command="input tap 5 700",
-                                 verification=verification_from_response(response),
                                  response=response, decision="approve")
     row = recorder.outcomes[0]
-    assert row["verification"] == "verified"
+    assert recorder.verdicts[0]["verdict"].status == "verified"
     assert row["executed_command"] == "input tap 5 700"
     assert row["goal"] == "press 7" and row["goal_id"] == goal_id_for("press 7")
     assert row["satisfied"] == 0.97
