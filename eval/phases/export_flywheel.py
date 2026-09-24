@@ -98,16 +98,16 @@ def spans_for(rows: list[dict]) -> list[dict]:
             if chatter:
                 spans.append({"call_id": call_id, "role": "chatter", "phase": row.get("phase"),
                               "text": ";".join(chatter), "weight": WEIGHT_CHATTER})
-            if row.get("reasons"):
-                spans.append({"call_id": call_id, "role": "chatter", "phase": row.get("phase"),
-                              "text": ";".join(str(r) for r in row["reasons"]), "weight": WEIGHT_CHATTER})
-        else:  # outcome row
+        else:  # outcome row: reasons live in the flat extra field act_reasons, not on decisions
             names = [s.get("name") for s in (row.get("steps") or []) if s.get("name")]
             for command in names or ([row["executed_command"]] if row.get("executed_command") else []):
                 spans.append({"call_id": call_id, "role": "action", "text": command, "weight": WEIGHT_ACTION})
             if row.get("recovery_command"):
                 spans.append({"call_id": call_id, "role": "action", "text": row["recovery_command"],
                               "weight": WEIGHT_ACTION})
+            if row.get("act_reasons"):
+                spans.append({"call_id": call_id, "role": "chatter",
+                              "text": ";".join(str(r) for r in row["act_reasons"]), "weight": WEIGHT_CHATTER})
     return spans
 
 
