@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from typesymbolic.calibrate import RecalibrationResult, recalibrate
-from typesymbolic.journal import Journal
+from typesymbolic.journal import DECISION, VERDICT, Journal
 
 from jevdevice.budget import profile_for
 from jevdevice.calibrate.units import CALIBRATION_UNITS, store
@@ -53,6 +53,35 @@ def brier(values: list[float], labels: list[bool]) -> float:
 def logloss(values: list[float], labels: list[bool], eps: float = 1e-6) -> float:
     clipped = [min(max(p, eps), 1 - eps) for p in values]
     return -sum(math.log(p if y else 1 - p) for p, y in zip(clipped, labels)) / len(labels)
+
+
+def fit_temperature(vectors: list[tuple[dict[str, float], str]]) -> float | None:
+    """Best T (0.10..3.00) for the p^(1/T) NLL over choice vectors;
+    reporting diagnostic only, never applied to a gate or the runtime."""
+    def nll(t: float) -> float:
+        scaled = ({k: p ** (1 / t) for k, p in probs.items()} for probs, _ in vectors)
+        return sum(-math.log(s[c] / sum(s.values())) if c in s and sum(s.values()) > 0 else math.inf
+                   for s, (_, c) in zip(scaled, vectors)) / len(vectors)
+    return min((round(0.05 * i, 2) for i in range(2, 61)), key=nll) if vectors else None
+
+
+def temperature_vectors(journal: Journal, *, engine: str) -> list[tuple[dict[str, float], str]]:
+    """(probabilities, correct_option) for verified choice answers: decision
+    rows joined to verdict rows on call_id, scale='confidence' only."""
+    rows = list(journal.replay())
+    decisions = {row["call_id"]: row for row in rows
+                 if row.get("type") == DECISION and row.get("engine") == engine}
+    vectors: list[tuple[dict[str, float], str]] = []
+    for row in rows:
+        if row.get("type") != VERDICT or row.get("status") != "verified" or row.get("calibrate") is False:
+            continue
+        decision = decisions.get(row.get("call_id")) or {}
+        for key in row.get("tests") or []:
+            ref = (decision.get("questions") or {}).get(key) or {}
+            answer = (decision.get("answers") or {}).get(key) or {}
+            if ref.get("scale") == "confidence" and answer.get("probabilities") and answer.get("choice"):
+                vectors.append((answer["probabilities"], answer["choice"]))
+    return vectors
 
 
 def conformal_threshold(values: list[float], labels: list[bool], *, alpha: float = CONFORMAL_ALPHA) -> float | None:
@@ -153,6 +182,8 @@ def run(
         )
         print(f"[{knob}] incumbent={getattr(profile, knob)} proposed={result.proposal.proposed} "
               f"-> {direction} threshold={result.threshold} ({result.note})")
+    fitted_t = fit_temperature(temperature_vectors(journal, engine=engine))
+    print(f"[diagnostic, not applied] fitted temperature: {fitted_t if fitted_t is not None else 'n/a'}")
     return results
 
 

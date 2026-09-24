@@ -141,6 +141,27 @@ def test_run_keeps_incumbent_with_no_labels(tmp_path) -> None:
 # ---- offline-safe: zero model calls ---------------------------------------
 
 
+def test_temperature_vectors_collect_verified_choice_and_skip_failed(tmp_path) -> None:
+    from typesymbolic.domain import Verdict
+    from typesymbolic.question import Answer, QuestionRef
+
+    journal = Journal(root=tmp_path / "journal", rotation="daily", background_writes=False)
+    ref = QuestionRef(qid="q", group="pick", scale="confidence")
+    good = Answer.from_choice("q", "a", {"a": 0.7, "b": 0.3})
+    bad = Answer.from_choice("q", "a", {"a": 0.6, "b": 0.4})
+    journal.record_decision(
+        call_id="c1", engine="laya", phase=None, answers={"k": good}, questions={"k": ref})
+    journal.record_verdict(call_id="c1", verdict=Verdict(status="verified", tests=("k",)))
+    journal.record_decision(
+        call_id="c2", engine="laya", phase=None, answers={"k": bad}, questions={"k": ref})
+    journal.record_verdict(call_id="c2", verdict=Verdict(status="failed", tests=("k",)))
+
+    vectors = cont.temperature_vectors(journal, engine="laya")
+    assert vectors == [({"a": 0.7, "b": 0.3}, "a")]
+    t = cont.fit_temperature(vectors)
+    assert t is not None and 0.1 <= t <= 3.0
+
+
 def test_module_never_imports_an_engine() -> None:
     banned = {"jevdevice.jev", "jevdevice.laya_backend", "jevdevice.mcp_server",
               "jevdevice.transport", "jevdevice.common"}

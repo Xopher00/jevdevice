@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -36,16 +35,6 @@ from jevdevice.calibrate import (
 )
 
 OUT_DIR = REPO / "eval" / "phases" / "finetune_eval"
-
-
-def fit_temperature(vectors: list[tuple[dict[str, float], str]]) -> float | None:
-    """Best T (0.10..3.00) for the p^(1/T) NLL; None if empty (not in
-    jevdevice.calibrate.continuous -- only this scorecard needs it)."""
-    def nll(t: float) -> float:
-        scaled = ({k: p ** (1 / t) for k, p in probs.items()} for probs, _ in vectors)
-        return sum(-math.log(s[c] / sum(s.values())) if c in s and sum(s.values()) > 0 else math.inf
-                   for s, (_, c) in zip(scaled, vectors)) / len(vectors)
-    return min((round(0.05 * i, 2) for i in range(2, 61)), key=nll) if vectors else None
 
 
 def resolve_checkpoint(spec: str, token: str | None) -> Path:
@@ -125,7 +114,7 @@ def choice_report(rows: list[dict]) -> dict:
         "confidence_brier": p4r.brier(confidences, correct_flags),
         "confidence_logloss": p4r.logloss(confidences, correct_flags),
         "confidence_ece": p4r.ece(confidences, correct_flags),
-        "temperature_refit": fit_temperature(_vectors_with_names(rows)),
+        "temperature_refit": p4r.fit_temperature(_vectors_with_names(rows)),
     }
 
 
