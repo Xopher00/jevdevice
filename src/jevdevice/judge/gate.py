@@ -19,9 +19,8 @@ from itertools import pairwise
 # strings (read_only/deny_listed/jev_confirmed/jev_uncertain -- journal-
 # continuity vocabulary), and the ask orchestration around the threshold
 # call. The confidence handed to the threshold is the RAW noul probability
-# (what the 0.8 gate threshold was calibrated against), NOT a synthesized
-# noul confidence -- core's Answer shape derives |p-0.5|*2 for nouls, which
-# would silently reinterpret every calibrated threshold (see report H2).
+# (what the 0.8 gate threshold was calibrated against) -- core never
+# synthesizes a confidence for a noul answer, so this is a direct read.
 from typesymbolic.circuit import threshold_decision
 from typesymbolic.gate import GateResult, GateVerdict
 
@@ -198,8 +197,7 @@ def finalize_gate(
     profile.gate_threshold (gate_command resolves it that way); the bare default
     stays the jev-era 0.8. `call_id` joins the verdict to that shared ask's
     decision row (see _fused_pick_and_gate). A missing confidence fails CLOSED
-    (needs_approval) -- deliberately more conservative than core's mutation_gate,
-    which fails open on None (see report H3)."""
+    (needs_approval), never ACT."""
     if is_denied(command.command):
         return GateResult(GateVerdict.DENY, "deny_listed", confidence, call_id)
     passes, _ = threshold_decision(confidence, threshold)
