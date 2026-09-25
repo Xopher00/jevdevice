@@ -218,6 +218,8 @@ class ClosedSetProposal:
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
     pick_call_id: str | None = None  # the "pick" answer's own row -- device verdicts label this, not the gate
+    label_keys: tuple[str, ...] = ()  # a closed-set pick asks no fit_i
+    gate_key: str | None = None  # "safe" when the gate ask ran; None when read-only/denied skipped it
 
 
 async def propose_from_closed_set(
@@ -266,4 +268,5 @@ async def propose_from_closed_set(
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
     return ClosedSetProposal(pick_answer.choice, pick_answer.confidence, ready, pending, reasons,
-                             gate_result=gate_result, pick_call_id=call_id)
+                             gate_result=gate_result, pick_call_id=call_id,
+                             gate_key="safe" if gate_result.call_id is not None else None)

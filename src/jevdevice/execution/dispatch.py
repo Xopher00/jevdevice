@@ -339,6 +339,18 @@ PICK_KEY_FOR = {
 }
 
 
+def label_target(proposal, kind: str) -> outcomes.LabelTarget:
+    """One LabelTarget per proposal/result: pick key (+ any `label_keys` the
+    proposal carries, e.g. the chosen candidate's fit_i) on the pick's own
+    call_id, gate_key on the gate's -- both may not exist yet (wave 2)."""
+    call_id = pick_call_id_of(proposal) or getattr(proposal, "call_id", None)
+    keys = (PICK_KEY_FOR.get(kind, "pick"), *getattr(proposal, "label_keys", ()))
+    return outcomes.LabelTarget(
+        call_id=call_id, keys=tuple(dict.fromkeys(keys)),
+        gate_call_id=call_id_of(proposal), gate_key=getattr(proposal, "gate_key", None),
+    )
+
+
 # --- one atomic action, one shared execution path -----------------------------
 # Both real callers (the MCP server and the planner) run actions through
 # run_kind: propose -> gate -> execute, bracketed with a graph_edge, outcome
@@ -363,7 +375,7 @@ async def _run_ungated(
         after = result.package if result.launched and result.package else await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.record_action(
-            device=device, call_id=result.call_id, key="pick", kind=kind,
+            device=device, kind=kind, label=label_target(result, kind),
             executed_command=f"monkey -p {result.package} 1" if result.package else None,
             response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
@@ -372,7 +384,7 @@ async def _run_ungated(
         result = await run_dumpsys_query(jev, device, goal, verbose=False)
         response = response_for(kind, result, jev.name)
         outcomes.record_action(
-            device=device, call_id=result.call_id, key="pick", kind=kind,
+            device=device, kind=kind, label=label_target(result, kind),
             executed_command=f"dumpsys {result.service}" if result.service else None,
             response=response, tier=tier, recipe_id=recipe_id,
         )
@@ -384,7 +396,7 @@ async def _run_ungated(
         after = await outcomes.foreground_safe(device)
         edge = {"from_node": before, "to_node": after} if (before or after) else None
         outcomes.record_action(
-            device=device, call_id=result.call_id, key="pick", kind=kind,
+            device=device, kind=kind, label=label_target(result, kind),
             executed_command=result.executed[-1] if result.executed else None, response=response,
             executed=list(result.executed), graph_edge=edge, tier=tier, recipe_id=recipe_id,
         )
@@ -410,9 +422,10 @@ async def run_kind(
     the kind that ran. Returns the response dict.
 
     A needs_approval verdict never executes here. `on_pending` receives
-    (goal, kind, resume_arg, confidence, pending, verify) and returns the
-    response to surface (the MCP server stores the pending action for
-    device_approve); with no hook the verdict is returned as an escalation.
+    (goal, kind, resume_arg, confidence, pending, verify, label=LabelTarget)
+    and returns the response to surface (the MCP server stores the pending
+    action for device_approve); with no hook the verdict is returned as an
+    escalation.
     `auto_approve` decides a needs_approval verdict for this call only -- a
     DENIED command still stops the action, same invariant as everywhere else.
     tier/recipe_id stamp planner-driven rows (None on ordinary rows)."""
@@ -428,17 +441,20 @@ async def run_kind(
         if auto_approve:
             command = proposal.pending.command
         elif on_pending is not None:
-            outcomes.record_action(device=device, call_id=call_id, key=kind, status="needs_approval",
+            outcomes.record_action(device=device, call_id=call_id, key=PICK_KEY_FOR.get(kind, "pick"),
+                                   kind=kind, status="needs_approval",
                                    gate=getattr(proposal, "gate_result", None), tier=tier,
                                    recipe_id=recipe_id)
             # The hook contract (type hint above) admits sync and async alike:
             # the MCP server parks a pending action synchronously, so the
             # hook's return is awaited only when it is actually awaitable.
             hooked = on_pending(goal, kind, handler.resume_arg(proposal),
-                                getattr(proposal, "confidence", 0.0), proposal.pending, verify)
+                                getattr(proposal, "confidence", 0.0), proposal.pending, verify,
+                                label=label_target(proposal, kind))
             return await hooked if inspect.isawaitable(hooked) else hooked
     if command is None:
-        outcomes.record_action(device=device, call_id=call_id, key=kind, response={"status": "escalated"},
+        outcomes.record_action(device=device, call_id=call_id, key=PICK_KEY_FOR.get(kind, "pick"),
+                               kind=kind, response={"status": "escalated"},
                                gate=getattr(proposal, "gate_result", None), tier=tier, recipe_id=recipe_id)
         return {"status": "escalated", "reasons": list(proposal.reasons)}
     outcome, edge = await outcomes.graph_edge_around(
@@ -446,7 +462,7 @@ async def run_kind(
     )
     response = response_for(kind, outcome, jev.name)
     outcomes.record_action(
-        device=device, call_id=pick_call_id_of(proposal), key=PICK_KEY_FOR.get(kind), kind=kind,
+        device=device, kind=kind, label=label_target(proposal, kind),
         gate=getattr(proposal, "gate_result", None),
         executed_command=command.command, response=response, graph_edge=edge, tier=tier, recipe_id=recipe_id,
     )

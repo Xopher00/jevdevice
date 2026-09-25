@@ -451,7 +451,7 @@ async def test_run_kind_unattended_never_auto_approves(monkeypatch, journal_reco
     result = await planner.run_kind_unattended(
         SimpleNamespace(name="jev"), DumpTransport(), "swipe", "go back home")
     assert result.detail.get("status") == "escalated"
-    assert any(r.get("key") == "swipe" for r in journal_recorder.outcomes)
+    assert any(r.get("kind") == "swipe" and r.get("key") == "pick" for r in journal_recorder.outcomes)
     assert journal_recorder.verdicts[-1]["verdict"].status == "escalated"
 
 

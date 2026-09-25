@@ -105,6 +105,18 @@ class NarrowVerdict:
     def ok(self) -> bool:
         return not self.reasons
 
+    @property
+    def fit_key(self) -> str | None:
+        """The fit_i key the EXECUTED choice's fit Noul was asked under (shortlist
+        order == the order fit_questions built fit_0..n over). None when there's
+        no executed choice (abstain, or choice not grounded in the shortlist)."""
+        if self.choice is None:
+            return None
+        try:
+            return f"fit_{self.shortlist.index(self.choice)}"
+        except ValueError:
+            return None
+
 
 def decide(
     choice: str | None, probabilities: dict[str, float], confidence: float,

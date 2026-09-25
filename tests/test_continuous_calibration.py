@@ -126,15 +126,17 @@ def test_run_tightens_the_gate_threshold_on_a_synthetic_journal(tmp_path) -> Non
     results = cont.run(directory, engine="laya", human_signoff=False, calibration_store=calibration_store)
     result = results["gate_threshold"]
     assert result.applied
-    assert result.threshold > LAYA_PROFILE.gate_threshold  # tightened, not loosened
-    assert result.proposal.precision == 1.0
+    assert result.n_labels == 30
+    assert result.before == LAYA_PROFILE.gate_threshold
+    assert result.after > LAYA_PROFILE.gate_threshold  # tightened, not loosened
 
 
 def test_run_keeps_incumbent_with_no_labels(tmp_path) -> None:
     calibration_store = CalibrationStore(tmp_path / "calibration")
     results = cont.run(tmp_path / "empty-journal", engine="laya", human_signoff=False, calibration_store=calibration_store)
     for knob, result in results.items():
-        assert result.threshold == getattr(LAYA_PROFILE, knob)
+        assert result.after == getattr(LAYA_PROFILE, knob)
+        assert result.n_labels == 0
         assert not result.applied
 
 
@@ -160,6 +162,27 @@ def test_temperature_vectors_collect_verified_choice_and_skip_failed(tmp_path) -
     assert vectors == [({"a": 0.7, "b": 0.3}, "a")]
     t = cont.fit_temperature(vectors)
     assert t is not None and 0.1 <= t <= 3.0
+
+
+def test_resolve_engine_prefers_flag_over_env_over_default(monkeypatch) -> None:
+    monkeypatch.setenv("JEV_ENGINE", "laya")
+    assert cont.resolve_engine("jev") == "jev"  # flag wins
+    assert cont.resolve_engine(None) == "laya"  # env wins over default
+    monkeypatch.delenv("JEV_ENGINE", raising=False)
+    assert cont.resolve_engine(None) == "jev"  # default
+
+
+def test_run_resolves_engine_the_same_way(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("JEV_ENGINE", "laya")
+    calibration_store = CalibrationStore(tmp_path / "calibration")
+    results = cont.run(tmp_path / "empty-journal", human_signoff=False, calibration_store=calibration_store, quiet=True)
+    assert results["gate_threshold"].after == LAYA_PROFILE.gate_threshold  # env picked up laya
+
+
+def test_run_quiet_prints_nothing(tmp_path, capsys) -> None:
+    calibration_store = CalibrationStore(tmp_path / "calibration")
+    cont.run(tmp_path / "empty-journal", engine="laya", human_signoff=False, calibration_store=calibration_store, quiet=True)
+    assert capsys.readouterr().out == ""
 
 
 def test_module_never_imports_an_engine() -> None:

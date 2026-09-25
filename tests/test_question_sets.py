@@ -85,6 +85,31 @@ def test_fit_questions_build_and_mark_generated_family() -> None:
     assert generated["fit_0"].model_dump(mode="json", exclude_none=True) == compiled["fit_0"].model_dump(mode="json", exclude_none=True)
 
 
+def test_unit_maps_picks_fits_gates_and_falls_back_to_none() -> None:
+    qset = question_sets.load()
+    for qid in ("tap.pick", "kind.pick", "kind.pick_screen", "swipe.pick", "toggle.service",
+                "toggle.enabled", "toggle.resolve_status.pick"):
+        assert qset.unit(qid) == ("pick", "confidence"), qid
+    for qid in ("tap.fit", "toggle.resolve_status.fit", "dumpsys_query.fit"):
+        assert qset.unit(qid) == ("fit", "noul_p"), qid
+    assert qset.unit("tap.safe") == ("gate", "noul_p")
+    assert qset.unit("tap.safe_fused") == ("gate", "noul_p")
+    assert qset.unit("gate.safe.default") == ("gate", "noul_p")
+    # excluded on purpose: not confidence-gated / accept_any_fitting skips the gate
+    for qid in ("type_value.pick", "dumpsys_query.pick", "dumpsys_field.pick", "recall.any"):
+        assert qset.unit(qid) is None, qid
+
+
+def test_tagged_fit_questions_are_byte_identical_and_carry_the_qid() -> None:
+    untagged = question_sets.fit_questions("tap.fit", ["a", "b"])
+    tagged = question_sets.fit_questions("tap.fit", ["a", "b"], qid="tap.fit")
+    assert tagged["fit_0"].instructions == untagged["fit_0"].instructions == "Would tapping a actually perform the goal?"
+    assert tagged["fit_0"].model_dump(mode="json", exclude_none=True) == untagged["fit_0"].model_dump(mode="json", exclude_none=True)
+    assert isinstance(tagged["fit_0"], question_sets.TaggedNoul)
+    assert tagged["fit_0"].qid == "tap.fit"
+    assert not isinstance(untagged["fit_0"], question_sets.TaggedNoul)
+
+
 def test_generated_noul_wire_invisible() -> None:
     plain = Noul(instructions="does it fit?")
     hatched = question_sets.generated_noul("test.hatch", "does it fit?")

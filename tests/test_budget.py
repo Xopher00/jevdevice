@@ -95,6 +95,57 @@ def test_current_profile_falls_back_to_the_process_env(monkeypatch) -> None:
     assert current_profile("jev") is JEV_PROFILE  # explicit engine wins over env
 
 
+def test_current_profile_overlays_promoted_values(monkeypatch, tmp_path) -> None:
+    from typesymbolic.calibration_store import CalibrationStore
+    from typesymbolic.vocab import unit_name
+
+    from jevdevice.calibrate import units
+
+    calibration_store = CalibrationStore(tmp_path / "calibration")
+    monkeypatch.setattr(units, "_store", calibration_store)
+    calibration_store.set(
+        unit_name("gate", "noul_p"), 0.93, engine="jev", default=JEV_PROFILE.gate_threshold, n=25,
+    )
+    calibration_store.set(
+        unit_name("fit", "noul_p"), 0.71, engine="jev", default=JEV_PROFILE.min_fit, n=25,
+    )
+    calibration_store.set(
+        unit_name("pick", "confidence"), 0.66, engine="jev", default=JEV_PROFILE.min_confidence, n=25,
+    )
+    profile = current_profile("jev")
+    assert profile.gate_threshold == 0.93
+    assert profile.min_fit == 0.71
+    assert profile.min_confidence == 0.66
+
+
+def test_current_profile_never_overlays_min_margin(monkeypatch, tmp_path) -> None:
+    from typesymbolic.calibration_store import CalibrationStore
+    from typesymbolic.vocab import unit_name
+
+    from jevdevice.calibrate import units
+
+    calibration_store = CalibrationStore(tmp_path / "calibration")
+    monkeypatch.setattr(units, "_store", calibration_store)
+    calibration_store.set(
+        unit_name("pick", "margin"), 0.42, engine="jev", default=JEV_PROFILE.min_margin, n=25,
+    )
+    assert current_profile("jev").min_margin == JEV_PROFILE.min_margin
+
+
+def test_profile_for_stays_pure_defaults(monkeypatch, tmp_path) -> None:
+    from typesymbolic.calibration_store import CalibrationStore
+    from typesymbolic.vocab import unit_name
+
+    from jevdevice.calibrate import units
+
+    calibration_store = CalibrationStore(tmp_path / "calibration")
+    monkeypatch.setattr(units, "_store", calibration_store)
+    calibration_store.set(
+        unit_name("gate", "noul_p"), 0.93, engine="jev", default=JEV_PROFILE.gate_threshold, n=25,
+    )
+    assert profile_for("jev") is JEV_PROFILE  # defaults, never overlaid
+
+
 def test_hosted_profile_keeps_the_historical_values() -> None:
     assert JEV_PROFILE.chunk_size == 200
     assert JEV_PROFILE.screen_limit == 150

@@ -93,6 +93,8 @@ class ToggleProposal:
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
     pick_call_id: str | None = None  # the "service"/"enabled" answers' own row -- device verdicts label this
+    label_keys: tuple[str, ...] = ()  # a closed-set service pick has no fit
+    gate_key: str | None = None  # "safe" when the gate ask ran
 
 
 async def propose_toggle(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> ToggleProposal:
@@ -132,7 +134,8 @@ async def propose_toggle(jev: JudgeEngine, device: Device, goal: str, *, verbose
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})\n")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
     return ToggleProposal(service, enabled, ready, pending, reasons,
-                          gate_result=gate_result, pick_call_id=call_id)
+                          gate_result=gate_result, pick_call_id=call_id,
+                          gate_key="safe" if gate_result.call_id is not None else None)
 
 
 @dataclass
@@ -159,6 +162,7 @@ async def execute_toggle(
         instructions=question_sets.text("toggle.resolve_status.pick"),
         fit_instructions=question_sets.text("toggle.resolve_status.fit", toggled_service=service),
         state_extra={"toggled_service": service}, pick_qid="toggle.resolve_status.pick",
+        fit_qid="toggle.resolve_status.fit",
     )
     if verbose:
         print(f"shortlist: {resolve_verdict.shortlist}")
@@ -241,6 +245,8 @@ class DumpsysOutcome:
     # Journal linkage: the service pick's round-2 ground ask (or the answer-field
     # pick's when one ran), so the outcome row joins the decision row that chose it.
     call_id: str | None = None
+    label_keys: tuple[str, ...] = ()  # the fit_i of whichever ask call_id carries
+    gate_key: str | None = None  # ungated (accept_any_fitting skips the gate): always None
 
 
 async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> DumpsysOutcome:
@@ -256,7 +262,7 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
         jev, goal, services,
         instructions=question_sets.text("dumpsys_query.pick"),
         fit_instructions=question_sets.text("dumpsys_query.fit"),
-        accept_any_fitting=True, pick_qid="dumpsys_query.pick",
+        accept_any_fitting=True, pick_qid="dumpsys_query.pick", fit_qid="dumpsys_query.fit",
     )
     if verbose:
         print(f"shortlist: {verdict.shortlist}")
@@ -264,7 +270,8 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
     if not verdict.ok:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(verdict.reasons)}")
-        return DumpsysOutcome(None, verdict.confidence, verdict.fit, reasons=tuple(verdict.reasons), call_id=verdict.call_id)
+        return DumpsysOutcome(None, verdict.confidence, verdict.fit, reasons=tuple(verdict.reasons), call_id=verdict.call_id,
+                              label_keys=(verdict.fit_key,) if verdict.fit_key else ())
 
     if verbose:
         print(f"--- step 4: code builds the command deterministically: dumpsys {verdict.choice} ---")
@@ -274,6 +281,8 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
         print(f"parsed {len(parsed)} key:value pairs (no model)\n")
 
     answer_key = None
+    field_verdict = None  # only assigned below when there's something to ask about -- an empty
+    # parse must not raise, it just means no answer-field ask ever ran.
     if parsed:
         async def _field_values(shortlist: list[str]) -> dict[str, str]:
             return {c: parsed[c] for c in shortlist}
@@ -287,7 +296,7 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
             instructions=question_sets.text("dumpsys_field.pick"),
             fit_instructions=question_sets.text("dumpsys_field.fit"),
             evidence_for=_field_values,
-            accept_any_fitting=True, pick_qid="dumpsys_field.pick",
+            accept_any_fitting=True, pick_qid="dumpsys_field.pick", fit_qid="dumpsys_field.fit",
         )
         if field_verdict.ok:
             answer_key = field_verdict.choice
@@ -297,5 +306,8 @@ async def run_dumpsys_query(jev: JudgeEngine, device: Device, goal: str, *, verb
             print(f"  {key}: {value}")
         if answer_key:
             print(f"\nanswer: {answer_key} = {parsed[answer_key]}")
+    field_asked_ok = field_verdict is not None and field_verdict.ok
+    winning_verdict = field_verdict if field_asked_ok else verdict
     return DumpsysOutcome(verdict.choice, verdict.confidence, verdict.fit, parsed, answer_key,
-                          call_id=field_verdict.call_id if field_verdict.ok else verdict.call_id)
+                          call_id=field_verdict.call_id if field_asked_ok else verdict.call_id,
+                          label_keys=(winning_verdict.fit_key,) if winning_verdict.fit_key else ())

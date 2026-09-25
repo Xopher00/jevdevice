@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 from typesymbolic.domain import ActOutcome, ActStep, Verdict
 
@@ -60,6 +61,18 @@ async def graph_edge_around(device: Device, run) -> tuple:
     return outcome, edge
 
 
+@dataclass(frozen=True)
+class LabelTarget:
+    """Which decision row(s) a device-verified outcome labels: `keys` on
+    `call_id` (pick key + chosen candidate's fit_i), plus the gate's own
+    `gate_key` -- on `call_id` too when fused, else on its own `gate_call_id`."""
+
+    call_id: str | None
+    keys: tuple[str, ...]
+    gate_call_id: str | None = None
+    gate_key: str | None = None
+
+
 def verdict_from_response(response: dict, *, key: str | None = None) -> Verdict:
     """The flow's own status -> a device Verdict; `key` is the pick key, never the `safe` gate noul."""
     status = response.get("status")
@@ -80,14 +93,20 @@ def record_action(
     executed: list | None = None, recovery_command: str | None = None,
     graph_edge: dict | None = None, decision: str | None = None, status: str | None = None,
     tier: int | None = None, recipe_id: str | None = None, reasons=None, succeeded: bool | None = None,
-    kind: str | None = None,
+    kind: str | None = None, label: LabelTarget | None = None,
 ) -> Verdict | None:
     """Journal one Act (`record_outcome`, `key` = the decision's own answer key
     the verdict speaks to -- "pick"/"service", never the kind name or the
     `safe` gate noul) and, given a device `response`, the Verdict it implies
     (`record_verdict`), both on `call_id`. `kind` (e.g. "tap") rides `extra`,
     descriptive only -- it never joins a decision row. `executed` -> one
-    ActStep per command. Returns the Verdict."""
+    ActStep per command. `label`, when given, overrides `call_id`/`key`: the
+    verdict's tests become `label.keys`, plus `label.gate_key` merged in (same
+    call_id) or written as a second verdict (separate `gate_call_id`). Returns
+    the Verdict written on `call_id`."""
+    if label is not None:
+        call_id = label.call_id
+        key = label.keys[0] if label.keys else None
     satisfied = exit_code = None
     if response is not None:
         status = response.get("status", status)
@@ -111,5 +130,10 @@ def record_action(
     journal.record_outcome(call_id=call_id, gate=gate, outcome=outcome, extra=extra or None,
                            episode_id=_EPISODE.get())
     if verdict:
-        journal.record_verdict(call_id=call_id, verdict=verdict)
+        tests = label.keys if label is not None else verdict.tests
+        if label is not None and label.gate_key and label.gate_call_id == call_id:
+            tests = tuple(dict.fromkeys((*tests, label.gate_key)))
+        journal.record_verdict(call_id=call_id, verdict=verdict, tests=tests)
+        if label is not None and label.gate_key and label.gate_call_id and label.gate_call_id != call_id:
+            journal.record_verdict(call_id=label.gate_call_id, verdict=verdict, tests=(label.gate_key,))
     return verdict

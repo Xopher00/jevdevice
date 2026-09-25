@@ -105,12 +105,15 @@ class TapProposal:
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
     pick_call_id: str | None = None  # the "pick" answer's own row -- device verdicts label this
+    label_keys: tuple[str, ...] = ()  # the chosen candidate's fit_i, when a fit noul was actually asked
+    gate_key: str | None = None  # "safe_i" when fused with the pick, "safe" when a separate gate ask ran
 
 
 async def _fused_pick_and_gate(
     jev: JudgeEngine, goal: str, options: dict[str, Element], *,
     pick_instructions: str, fit_instructions: str, safe_fused_id: str, safe_instructions: str,
     command_for, chosen_label_for, fit_generated_source: str | None = None, pick_qid: str | None = None,
+    fit_qid: str | None = None,
 ) -> tuple[NarrowVerdict, GateResult | None]:
     """Narrow + gate in one batched ask instead of two sequential round trips: a per-candidate
     safety Noul (TypeSafe's speculative-fan-out pattern) is asked alongside the pick, using each
@@ -132,7 +135,7 @@ async def _fused_pick_and_gate(
     pick_criteria = choice_criteria(criteria, profile)
     questions = {
         "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid else Choice(instructions=pick_instructions, criteria=pick_criteria),
-        **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source),
+        **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source, fit_qid=fit_qid),
         **{
             key: question_sets.noul(
                 safe_fused_id, chosen_action=chosen_label_for(c),
@@ -178,7 +181,7 @@ async def _propose_gesture(
     jev: JudgeEngine, device: Device, goal: str, *,
     parse_elements, pick_instructions: str, fit_instructions: str, safe_fused_id: str,
     safe_question_id: str, command_for, chosen_label_for, verbose: bool = True,
-    fit_generated_source: str | None = None, pick_qid: str | None = None,
+    fit_generated_source: str | None = None, pick_qid: str | None = None, fit_qid: str | None = None,
 ) -> TapProposal:
     """Shared by tap and long_press: narrow real matching elements + gate the resulting
     gesture. Only the element filter and command/label shape differ between callers.
@@ -198,21 +201,25 @@ async def _propose_gesture(
     options = short_options(elements) if profile.short_labels else elements
     cache_key = (foreground_package(dump_xml), goal)
     gate_result: GateResult | None = None
+    fused = False  # which branch _narrow took, once it runs at all
+    narrowed = False  # False on a cache hit: no fit noul was asked
 
     async def _narrow() -> NarrowVerdict:
-        nonlocal gate_result
+        nonlocal gate_result, fused, narrowed
+        narrowed = True
         if options and len(options) <= profile.chunk_size:
+            fused = True
             verdict, gate_result = await _fused_pick_and_gate(
                 jev, goal, options,
                 pick_instructions=pick_instructions, fit_instructions=fit_instructions,
                 safe_fused_id=safe_fused_id, safe_instructions=safe_instructions,
                 command_for=command_for, chosen_label_for=chosen_label_for,
-                fit_generated_source=fit_generated_source, pick_qid=pick_qid,
+                fit_generated_source=fit_generated_source, pick_qid=pick_qid, fit_qid=fit_qid,
             )
             if verbose:
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
         else:
-            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c, fit_generated_source=fit_generated_source, pick_qid=pick_qid)
+            verdict = await narrow_and_pick(jev, goal, list(options), instructions=pick_instructions, fit_instructions=fit_instructions, describe=lambda c: options[c].description or c, fit_generated_source=fit_generated_source, pick_qid=pick_qid, fit_qid=fit_qid)
             if verbose:
                 print(f"shortlist: {verdict.shortlist}")
                 print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
@@ -240,8 +247,21 @@ async def _propose_gesture(
     # Fused path: pick+gate share one call_id (gate_result.call_id has it, verdict.call_id is
     # unset). Fallback path: verdict.call_id is the pick's own, separate from the later gate ask.
     pick_call_id = verdict.call_id or gate_result.call_id
+    if not narrowed:
+        # cache hit: neither a fit noul nor a fused gate ask ran; the gate may
+        # still have run separately (or not, if it's read-only/denied).
+        label_keys: tuple[str, ...] = ()
+        gate_key = "safe" if gate_result.call_id is not None else None
+    elif fused:
+        idx = list(options).index(verdict.choice)
+        label_keys = (f"fit_{idx}",)
+        gate_key = f"safe_{idx}"
+    else:
+        label_keys = (verdict.fit_key,) if verdict.fit_key else ()
+        gate_key = "safe" if gate_result.call_id is not None else None
     return TapProposal(verdict.choice, verdict.confidence, verdict.fit, ready, pending, reasons,
-                       gate_result=gate_result, pick_call_id=pick_call_id)
+                       gate_result=gate_result, pick_call_id=pick_call_id,
+                       label_keys=label_keys, gate_key=gate_key)
 
 
 async def propose_tap(
@@ -263,7 +283,7 @@ async def propose_tap(
         safe_question_id="tap.safe",
         command_for=lambda el: f"input tap {el.x} {el.y}",
         chosen_label_for=lambda c: f"tap {c}",
-        verbose=verbose, pick_qid="tap.pick",
+        verbose=verbose, pick_qid="tap.pick", fit_qid=None if fit_instructions is not None else "tap.fit",
     )
 
 
@@ -287,7 +307,7 @@ async def propose_long_press(
         safe_question_id="long_press.safe",
         command_for=lambda el: f"input swipe {el.x} {el.y} {el.x} {el.y} 800",
         chosen_label_for=lambda c: f"long-press {c}",
-        verbose=verbose, pick_qid="long_press.pick",
+        verbose=verbose, pick_qid="long_press.pick", fit_qid=None if fit_instructions is not None else "long_press.fit",
     )
 
 
@@ -338,6 +358,8 @@ class ScrollToFindOutcome:
     # (or the last one when it never did), and every swipe command executed on the way.
     call_id: str | None = None
     executed: tuple[str, ...] = ()
+    label_keys: tuple[str, ...] = ()  # the final verdict's fit_i
+    gate_key: str | None = None  # ungated: always None
 
 
 async def scroll_to_find(
@@ -349,6 +371,7 @@ async def scroll_to_find(
     propose_swipe/execute_swipe (one real gesture) instead of paging a fixed number of times."""
     executed: list[str] = []
     last_call_id: str | None = None
+    last_fit_key: str | None = None
     for attempt in range(1, max_attempts + 1):
         elements = parse_all_elements(await dump_screen(device))
         options = short_options(elements) if current_profile(jev.name).short_labels else elements
@@ -357,13 +380,14 @@ async def scroll_to_find(
             instructions=question_sets.text("scroll_to_find.pick"),
             fit_instructions=question_sets.text("scroll_to_find.fit"),
             describe=lambda c, options=options: options[c].description or c,  # bind now: B023 (lambda is consumed within this iteration)
-            pick_qid="scroll_to_find.pick",
+            pick_qid="scroll_to_find.pick", fit_qid="scroll_to_find.fit",
         )
-        last_call_id = verdict.call_id
+        last_call_id, last_fit_key = verdict.call_id, verdict.fit_key
         if verbose:
             print(f"attempt {attempt}/{max_attempts}: picked {verdict.choice!r} ok={verdict.ok}")
         if verdict.ok:
-            return ScrollToFindOutcome(verdict.choice, attempt, call_id=verdict.call_id, executed=tuple(executed))
+            return ScrollToFindOutcome(verdict.choice, attempt, call_id=verdict.call_id, executed=tuple(executed),
+                                       label_keys=(verdict.fit_key,) if verdict.fit_key else ())
 
         proposal = await propose_swipe(jev, device, f"scroll {direction}", verbose=False)
         # Only proposal.ready runs here -- a needs_approval verdict stops the loop like
@@ -372,10 +396,12 @@ async def scroll_to_find(
             return ScrollToFindOutcome(
                 None, attempt, reasons=("swipe gate did not approve scrolling", *proposal.reasons),
                 call_id=last_call_id, executed=tuple(executed),
+                label_keys=(last_fit_key,) if last_fit_key else (),
             )
         executed.append(proposal.ready.command)
         await execute_command(device, proposal.ready)
-    return ScrollToFindOutcome(None, max_attempts, reasons=(f"not found after {max_attempts} scrolls"), call_id=last_call_id, executed=tuple(executed))
+    return ScrollToFindOutcome(None, max_attempts, reasons=(f"not found after {max_attempts} scrolls"), call_id=last_call_id, executed=tuple(executed),
+                               label_keys=(last_fit_key,) if last_fit_key else ())
 
 
 async def _verify_after_action(
@@ -440,6 +466,8 @@ class TypeProposal:
     reasons: tuple[str, ...] = ()
     gate_result: GateResult | None = None  # journal linkage: outcome rows read gate_result.call_id
     pick_call_id: str | None = None  # the "pick" answer's own row -- device verdicts label this
+    label_keys: tuple[str, ...] = ()  # the chosen field's fit_i, empty on a cache hit (no fit asked)
+    gate_key: str | None = None  # "safe" when the separate type.safe gate ask ran
 
 
 def _no_editable_field_reasons(dump_xml: str, goal: str) -> tuple[str, ...]:
@@ -476,7 +504,7 @@ async def _pick_value(jev: JudgeEngine, goal: str, spans: list[str]) -> dict | N
 
 async def _fused_field_and_value(
     jev: JudgeEngine, goal: str, options: dict[str, Element], spans: list[str], fit_instructions: str,
-    *, fit_generated_source: str | None = None,
+    *, fit_generated_source: str | None = None, fit_qid: str | None = None,
 ) -> tuple[NarrowVerdict, dict | None, str | None]:
     """Batches field-narrow with value-pick into one real request on a cache miss -- they're
     independent facts that previously cost two separate round trips (asyncio.gather only
@@ -490,7 +518,7 @@ async def _fused_field_and_value(
     state = {"goal": goal, "candidates": field_criteria}
     questions = {
         "pick": question_sets.choice("type_field.pick", choice_criteria(field_criteria, profile)),
-        **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source),
+        **fit_questions(options, fit_instructions, lambda c: options[c].description or c, generated_source=fit_generated_source, fit_qid=fit_qid),
     }
     if spans:
         state["candidate_values"] = spans
@@ -529,7 +557,8 @@ async def propose_type(
     spans = extract_value_spans(goal)
     cache_key = (foreground_package(dump_xml), goal)
     cached = _ELEMENT_CACHE.get(cache_key)
-    if cached in options:
+    cache_hit = cached in options
+    if cache_hit:
         if verbose:
             print(f"cache hit: {cached!r} still on screen, skipping Jev narrowing")
         field_verdict = NarrowVerdict(cached, 1.0, 1.0, 1.0, [cached])
@@ -539,6 +568,7 @@ async def propose_type(
             jev, goal, options, spans,
             fit_instructions or question_sets.text("type_field.fit"),
             fit_generated_source=None if fit_instructions is None else "propose_type.fit_instructions_override",
+            fit_qid=None if fit_instructions is not None else "type_field.fit",
         )
         if field_verdict.ok:
             _ELEMENT_CACHE[cache_key] = field_verdict.choice
@@ -576,8 +606,11 @@ async def propose_type(
     if verbose:
         print(f"gate verdict: {gate_result.verdict} ({gate_result.reason}, noul={gate_result.confidence})")
     ready, pending, reasons = resolve_gate(gate_result, command, chosen_label)
+    label_keys = () if cache_hit else ((field_verdict.fit_key,) if field_verdict.fit_key else ())
+    gate_key = "safe" if gate_result.call_id is not None else None
     return TypeProposal(field_verdict.choice, value, field_verdict.confidence, ready, pending, reasons,
-                        gate_result=gate_result, pick_call_id=pick_call_id)
+                        gate_result=gate_result, pick_call_id=pick_call_id,
+                        label_keys=label_keys, gate_key=gate_key)
 
 
 async def execute_type(

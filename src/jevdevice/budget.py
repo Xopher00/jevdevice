@@ -13,7 +13,7 @@ sites (describe_screen).
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 ENGINE_ENV = "JEV_ENGINE"
 JEV_ENGINE_NAME = "jev"
@@ -123,10 +123,39 @@ def profile_for(engine: str) -> BudgetProfile:
 
 def current_profile(engine: str | None = None) -> BudgetProfile:
     """Profile of the given engine, else of the process engine (JEV_ENGINE --
-    the same env bootstrap() reads; no client handle at the call site)."""
+    the same env bootstrap() reads; no client handle at the call site), with
+    any promoted calibration values overlaid (runtime reads; `profile_for`
+    stays pure defaults for recalibration)."""
     if engine is None:
         engine = (os.environ.get(ENGINE_ENV) or JEV_ENGINE_NAME).strip().lower()
-    return profile_for(engine)
+    return _overlay_promoted(profile_for(engine))
+
+
+def _overlay_promoted(profile: BudgetProfile) -> BudgetProfile:
+    """Overlays gate_threshold/min_fit/min_confidence from the calibration
+    store at the same pooled key calibrate.units.threshold() reads -- sync,
+    cached, no journal read. min_margin is never overlaid: LabelIndex holds
+    one scale per answer key and pick is labeled under confidence, so margin
+    never accumulates labels to promote. Falls back to `profile` unchanged on
+    any store failure, or when nothing is promoted (keeps identity)."""
+    try:
+        from typesymbolic.vocab import unit_name  # noqa: I001 -- lazy, avoids the units<->budget cycle
+
+        from jevdevice.calibrate.units import CALIBRATION_UNITS, store
+
+        calibration_store = store()
+        overrides = {}
+        for knob in ("gate_threshold", "min_fit", "min_confidence"):
+            group, scale = CALIBRATION_UNITS[knob]
+            default = getattr(profile, knob)
+            value = calibration_store.get(
+                unit_name(group, scale), engine=profile.engine, model_revision=None, default=default,
+            )
+            if value != default:
+                overrides[knob] = value
+        return replace(profile, **overrides) if overrides else profile
+    except Exception:  # noqa: BLE001 -- a calibration-store failure must never break the runtime profile
+        return profile
 
 
 def choice_criteria(options: dict[str, str | None], profile: BudgetProfile) -> dict[str, str | None]:

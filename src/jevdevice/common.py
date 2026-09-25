@@ -70,6 +70,10 @@ DEFAULT_DEVICE = "cpu"
 # version's confidence computation.
 DEFAULT_MODEL = "jev-1.13.0"
 
+# httpx's default 5s keep-alive made every human-paced goal pay a fresh ~400ms TLS
+# handshake; api.typesafe.ai holds idle connections for >=90s (measured 2026-09-25).
+JEV_KEEPALIVE_S = 120.0
+
 
 def bootstrap(serial: str | None = SERIAL) -> tuple[JevEngine | LayaClient, AdbDevice]:
     """Judge engine + device (the Device protocol's real Android
@@ -88,7 +92,10 @@ def bootstrap(serial: str | None = SERIAL) -> tuple[JevEngine | LayaClient, AdbD
         api_key = os.environ.get("TYPESAFE_AI_API")
         if not api_key:
             raise SystemExit("TYPESAFE_AI_API not set (required for the jev engine; JEV_ENGINE=laya runs in-process)")
-        client: JevEngine | LayaClient = JevEngine(api_key, DEFAULT_MODEL)
+        import httpx2  # the TypeSafe SDK's HTTP stack
+
+        client: JevEngine | LayaClient = JevEngine(api_key, DEFAULT_MODEL, transport=httpx2.AsyncHTTPTransport(
+            limits=httpx2.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=JEV_KEEPALIVE_S)))
         client.usage = UsageLedger()
         client.usage.record_engine(EngineInfo(engine="jev", model_revision=DEFAULT_MODEL))
         # Shadow mode: while jev answers, a laya shadow observes and journals

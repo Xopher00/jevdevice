@@ -1,12 +1,18 @@
-"""Test-suite-wide defaults, set before any test module imports the package.
+"""Isolates every test from the user's real ~/.jevdevice: JEV_JOURNAL_DIR
+points at a per-test tmp dir, and the process-wide journal/calibration-store
+singletons are reset so a prior test's cached instance is never reused."""
 
-JEV_SHADOW=0: the shadow observer attaches in common.bootstrap(), which
-runs at import of jevdevice.mcp_server (pulled in by earlier test modules).
-Tests must not load the laya checkpoint in the background of unrelated tests,
-so the shadow defaults off here; tests/test_shadow.py controls the knob
-explicitly per test via monkeypatch.
-"""
+from __future__ import annotations
 
-import os
+import pytest
 
-os.environ.setdefault("JEV_SHADOW", "0")
+from jevdevice.calibrate import units
+from jevdevice.journal import decision_log
+
+
+@pytest.fixture(autouse=True)
+def _isolated_journal_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv(decision_log.ENV_JOURNAL_DIR, str(tmp_path / "tsjournal"))
+    monkeypatch.setattr(decision_log, "_default_journal", None)
+    monkeypatch.setattr(units, "_store", None)
+    yield

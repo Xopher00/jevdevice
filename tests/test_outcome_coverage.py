@@ -307,7 +307,7 @@ async def test_run_kind_sync_on_pending_hook_round_trips(monkeypatch, outcome_jo
     judge = FakeJudge("jev", [dict(_TOGGLE_FILL), dict(_TOGGLE_GATE_UNCERTAIN)])
     seen: dict = {}
 
-    def sync_hook(goal, kind, resume_arg, confidence, pending, verify):
+    def sync_hook(goal, kind, resume_arg, confidence, pending, verify, **kwargs):
         seen.update(goal=goal, kind=kind, resume_arg=resume_arg, confidence=confidence,
                     command=pending.command.command, verify=verify)
         return {"status": "needs_approval", "thread_id": "t1"}
@@ -333,7 +333,7 @@ async def test_run_kind_async_on_pending_hook_still_round_trips(monkeypatch, out
 
     judge = FakeJudge("jev", [dict(_TOGGLE_FILL), dict(_TOGGLE_GATE_UNCERTAIN)])
 
-    async def async_hook(goal, kind, resume_arg, confidence, pending, verify):
+    async def async_hook(goal, kind, resume_arg, confidence, pending, verify, **kwargs):
         return {"status": "needs_approval", "thread_id": "t2"}
 
     response = await dispatch.run_kind(

@@ -23,3 +23,4 @@ eval/phases/recalibration/
 eval/phases/recipes/
 eval/phases/flywheel/*.json
 eval/phases/flywheel/*.jsonl
+demo_screenshots/

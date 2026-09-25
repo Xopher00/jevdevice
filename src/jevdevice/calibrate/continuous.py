@@ -11,12 +11,14 @@ from __future__ import annotations
 import math
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-from typesymbolic.calibrate import RecalibrationResult, recalibrate
+from typesymbolic.calibrate import recalibrate
 from typesymbolic.journal import DECISION, VERDICT, Journal
+from typesymbolic.vocab import unit_name
 
-from jevdevice.budget import profile_for
+from jevdevice.budget import ENGINE_ENV, JEV_ENGINE_NAME, profile_for
 from jevdevice.calibrate.units import CALIBRATION_UNITS, store
 from jevdevice.journal import decision_log
 
@@ -30,6 +32,27 @@ MIN_LABELS = 20
 def signoff_from_env() -> bool:
     """The human-set promotion switch core's `recalibrate` needs explicitly."""
     return os.environ.get(ENV_PROMOTION_SIGNOFF, "").strip().lower() in {"1", "yes", "true", "signoff"}
+
+
+def resolve_engine(engine: str | None) -> str:
+    """--engine flag > JEV_ENGINE env > jev -- same precedence as bootstrap()."""
+    if engine:
+        return engine
+    return (os.environ.get(ENGINE_ENV) or JEV_ENGINE_NAME).strip().lower()
+
+
+@dataclass(frozen=True)
+class KnobResult:
+    """One knob's refit outcome, shaped for a caller (the demo) to render."""
+
+    knob: str
+    group: str
+    scale: str
+    n_labels: int
+    before: float
+    after: float
+    applied: bool
+    note: str
 
 
 def ece(values: list[float], labels: list[bool], bins: int = ECE_BINS) -> float:
@@ -133,10 +156,11 @@ def conformal_spike(values: list[float], labels: list[bool], *, alpha: float = C
             "verdict": "keep" if reasons else "adopt", "reasons": reasons}
 
 
-def report_unit(name: str, pairs: list[tuple[float, bool]]) -> dict:
+def report_unit(name: str, pairs: list[tuple[float, bool]], *, quiet: bool = False) -> dict:
     """Probability-quality report for one calibration unit's labeled pairs."""
+    say = (lambda *_a: None) if quiet else print
     if not pairs:
-        print(f"\n== {name}: no labeled rows ==")
+        say(f"\n== {name}: no labeled rows ==")
         return {"n": 0}
     values, labels = [p for p, _ in pairs], [y for _, y in pairs]
     n = len(labels)
@@ -144,46 +168,55 @@ def report_unit(name: str, pairs: list[tuple[float, bool]]) -> dict:
         "n": n, "accuracy@0.5": sum((p >= 0.5) == y for p, y in zip(values, labels)) / n,
         "brier": brier(values, labels), "logloss": logloss(values, labels), "ece": ece(values, labels),
     }
-    print(f"\n== {name} == n={n}")
-    print("  metrics: " + ", ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items()))
+    say(f"\n== {name} == n={n}")
+    say("  metrics: " + ", ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" for k, v in metrics.items()))
     if n < MIN_LABELS:
-        print(f"  WARN: n={n} < {MIN_LABELS} -- thin sample, keep collecting")
+        say(f"  WARN: n={n} < {MIN_LABELS} -- thin sample, keep collecting")
     spike = conformal_spike(values, labels)
-    print(f"  conformal/ACI: threshold={spike['conformal_threshold']} approved={spike['approved_at_threshold']} "
-          f"bad_rate={spike['realized_bad_rate']} -> {spike['verdict']} {spike['reasons']}")
+    say(f"  conformal/ACI: threshold={spike['conformal_threshold']} approved={spike['approved_at_threshold']} "
+        f"bad_rate={spike['realized_bad_rate']} -> {spike['verdict']} {spike['reasons']}")
     metrics["conformal_spike"] = spike
     return metrics
 
 
 def run(
-    journal_dir: Path | None = None, *, engine: str = "laya", human_signoff: bool | None = None,
-    calibration_store=None,
-) -> dict[str, RecalibrationResult]:
+    journal_dir: Path | None = None, *, engine: str | None = None, human_signoff: bool | None = None,
+    calibration_store=None, quiet: bool = False,
+) -> dict[str, KnobResult]:
     """One refit pass: report each calibration unit, then recalibrate it
-    through core (tighten-only unless `human_signoff`). Zero model calls."""
+    through core (tighten-only unless `human_signoff`). Zero model calls.
+    `engine=None` resolves --engine-flag precedence (see `resolve_engine`)."""
+    say = (lambda *_a: None) if quiet else print
+    engine = resolve_engine(engine)
     directory = journal_dir or decision_log.journal_dir()
     journal = Journal(root=directory, rotation="daily", background_writes=False)
     profile = profile_for(engine)
     signoff = signoff_from_env() if human_signoff is None else human_signoff
     calibration_store = calibration_store or store()
-    print(f"== continuous calibration: engine={engine} journal={directory}")
+    say(f"== continuous calibration: engine={engine} journal={directory}")
 
-    results: dict[str, RecalibrationResult] = {}
+    results: dict[str, KnobResult] = {}
     for knob, (group, scale) in CALIBRATION_UNITS.items():
+        default = getattr(profile, knob)
         pairs = journal.labeled_pairs(group, scale, engine=engine, any_revision=True)
-        report_unit(f"{group}|{scale}", pairs)
+        report_unit(f"{group}|{scale}", pairs, quiet=quiet)
+        # before: store's current value, read ahead of recalibrate's own write.
+        before = calibration_store.get(unit_name(group, scale), engine=engine, model_revision=None, default=default)
         result = recalibrate(
             journal=journal, store=calibration_store, group=group, scale=scale, engine=engine,
-            default_threshold=getattr(profile, knob), human_signoff=signoff, pool_revisions=True,
+            default_threshold=default, human_signoff=signoff, pool_revisions=True,
         )
-        results[knob] = result
-        direction = "unchanged" if result.threshold == getattr(profile, knob) and not result.applied else (
+        results[knob] = KnobResult(
+            knob=knob, group=group, scale=scale, n_labels=len(pairs),
+            before=before, after=result.threshold, applied=result.applied, note=result.note,
+        )
+        direction = "unchanged" if result.threshold == default and not result.applied else (
             "applied" if result.applied else "refused/kept"
         )
-        print(f"[{knob}] incumbent={getattr(profile, knob)} proposed={result.proposal.proposed} "
-              f"-> {direction} threshold={result.threshold} ({result.note})")
+        say(f"[{knob}] incumbent={default} proposed={result.proposal.proposed} "
+            f"-> {direction} threshold={result.threshold} ({result.note})")
     fitted_t = fit_temperature(temperature_vectors(journal, engine=engine))
-    print(f"[diagnostic, not applied] fitted temperature: {fitted_t if fitted_t is not None else 'n/a'}")
+    say(f"[diagnostic, not applied] fitted temperature: {fitted_t if fitted_t is not None else 'n/a'}")
     return results
 
 
@@ -191,13 +224,20 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     apply = "--apply" in argv
     argv = [a for a in argv if a != "--apply"]
+    engine = None
+    if "--engine" in argv:
+        i = argv.index("--engine")
+        engine = argv[i + 1]
+        argv = argv[:i] + argv[i + 2:]
     directory = Path(argv[0]) if argv else None
-    results = run(directory, human_signoff=signoff_from_env() if apply else False)
+    results = run(directory, engine=engine, human_signoff=signoff_from_env() if apply else False)
     applied = {k: r for k, r in results.items() if r.applied}
     if apply and applied:
-        print("PROMOTED: " + ", ".join(f"{k}={r.threshold}" for k, r in applied.items()))
+        print("PROMOTED: " + ", ".join(f"{k}={r.after}" for k, r in applied.items()))
     elif not apply:
-        print("shadow-run mode: --apply not passed, nothing written beyond the calibration audit row")
+        # recalibrate() always writes tightenings to the store; only a
+        # loosening proposal is refused here (human_signoff stays False).
+        print("shadow-run mode: --apply not passed -- tightenings still promote; only loosening is refused")
     return 0
 
 

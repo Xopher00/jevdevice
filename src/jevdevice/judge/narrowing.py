@@ -52,14 +52,15 @@ def _as_criteria(items: list[str]) -> dict[str, None]:
 
 def fit_questions(
     shortlist: Sequence[str], fit_instructions: str, describe: Callable[[str], str] = lambda c: c,
-    *, generated_source: str | None = None,
+    *, generated_source: str | None = None, fit_qid: str | None = None,
 ) -> dict[str, Question]:
     """One "does this candidate really fit" Noul per shortlist entry, keyed fit_0..n in
     shortlist order -- shared by narrow_and_pick and ui.py's fused pick+gate asks.
     generated_source != None marks the family as an ESCAPE-HATCH generation (a
-    caller supplied wording outside the frozen question set) -- journaled, promotable."""
+    caller supplied wording outside the frozen question set) -- journaled, promotable.
+    fit_qid, when given, tags each fit_i for calibration (unit() -> "fit")."""
     return question_sets.fit_questions_from(
-        fit_instructions, shortlist, describe, generated_source=generated_source,
+        fit_instructions, shortlist, describe, generated_source=generated_source, qid=fit_qid,
     )
 
 
@@ -141,10 +142,11 @@ async def _pick_and_decide(
     state_extra: dict | None, describe: Callable[[str], str],
     enumerated: Sequence[str], min_fit: float, min_confidence: float, min_margin: float,
     accept_any_fitting: bool, fit_generated_source: str | None = None, pick_qid: str | None = None,
+    fit_qid: str | None = None,
 ) -> NarrowVerdict:
     """Round 2 shared by every path (direct, retrieval shortlist, chunked sweep):
     one Choice over the shortlist plus a fit Noul per entry, then decide().
-    `pick_qid`, when given, tags the pick for calibration."""
+    `pick_qid`/`fit_qid`, when given, tag the pick/fit_i family for calibration."""
     profile = current_profile(jev.name)
     if not shortlist:
         return decide(None, {}, 0.0, {}, enumerated, min_fit=min_fit, min_confidence=min_confidence, min_margin=min_margin, accept_any_fitting=accept_any_fitting)
@@ -163,7 +165,7 @@ async def _pick_and_decide(
     call_id, answers = await ask(jev, state, {
         "pick": question_sets.choice(pick_qid, pick_criteria) if pick_qid
                 else Choice(instructions=instructions, criteria=pick_criteria),
-        **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source),
+        **fit_questions(shortlist, fit_instructions, describe, generated_source=fit_generated_source, fit_qid=fit_qid),
     }, phase="ground")
     pick = answers["pick"]
     fits = extract_fits(answers, shortlist)
@@ -182,10 +184,10 @@ async def narrow_and_pick(
     min_confidence: float | None = None,
     min_margin: float | None = None, state_extra: dict | None = None, accept_any_fitting: bool = False,
     describe: Callable[[str], str] = lambda c: c, fit_generated_source: str | None = None,
-    pick_qid: str | None = None,
+    pick_qid: str | None = None, fit_qid: str | None = None,
 ) -> NarrowVerdict:
-    """Rounds 1+2+decide: the one function real call sites use. `pick_qid`,
-    when given, tags every pick this makes for calibration.
+    """Rounds 1+2+decide: the one function real call sites use. `pick_qid`/`fit_qid`,
+    when given, tag every pick/fit_i this makes for calibration.
 
     When candidates already fit in one chunk (on-screen elements, always small),
     round 1 buys nothing but a round trip and a beam_k=3 cutoff that can lose
@@ -215,7 +217,7 @@ async def narrow_and_pick(
                 evidence_for=evidence_for, state_extra=state_extra, describe=describe,
                 enumerated=candidates, min_fit=min_fit, min_confidence=min_confidence,
                 min_margin=min_margin, accept_any_fitting=accept_any_fitting,
-                fit_generated_source=fit_generated_source, pick_qid=pick_qid,
+                fit_generated_source=fit_generated_source, pick_qid=pick_qid, fit_qid=fit_qid,
             )
             if verdict.ok:
                 return verdict
@@ -232,5 +234,5 @@ async def narrow_and_pick(
         evidence_for=evidence_for, state_extra=state_extra, describe=describe,
         enumerated=candidates, min_fit=min_fit, min_confidence=min_confidence,
         min_margin=min_margin, accept_any_fitting=accept_any_fitting,
-        fit_generated_source=fit_generated_source, pick_qid=pick_qid,
+        fit_generated_source=fit_generated_source, pick_qid=pick_qid, fit_qid=fit_qid,
     )

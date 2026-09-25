@@ -198,7 +198,7 @@ async def test_dispatch_run_kind_labels_the_pick_not_the_kind_or_gate(tmp_path: 
 
     await dispatch.run_kind(engine, object(), "swipe", "go back")
 
-    assert journal.labeled_pairs("swipe.pick", "confidence", engine="jev", any_revision=True) == [(0.9, True)]
+    assert journal.labeled_pairs("pick", "confidence", engine="jev", any_revision=True) == [(0.9, True)]
     assert journal.labeled_pairs("gate", "noul_p", engine="jev", any_revision=True) == []
 
 

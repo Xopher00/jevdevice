@@ -29,6 +29,7 @@ from jevdevice.execution.dispatch import (
 )
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import goal_scope
+from jevdevice.journal.outcomes import LabelTarget
 from jevdevice.judge.gate import CommandVariant, Pending
 
 from .common import bootstrap
@@ -46,6 +47,7 @@ class PendingAction:
     pending: Pending
     verify: bool = True
     call_id: str | None = None  # journal linkage: joins the outcome row to the gate's decision row
+    label: LabelTarget | None = None
 
 
 _PENDING: dict[str, PendingAction] = {}
@@ -61,13 +63,17 @@ def _pending_response(action_id: str, action: PendingAction) -> dict:
     }
 
 
-def _store_pending(goal: str, kind: str, resume_arg: str | None, confidence: float, pending: Pending, verify: bool = True) -> dict:
+def _store_pending(
+    goal: str, kind: str, resume_arg: str | None, confidence: float, pending: Pending,
+    verify: bool = True, *, label: LabelTarget | None = None,
+) -> dict:
     """dispatch.run_kind's on_pending hook: park the proposed action for a
     human and surface the approval prompt as the tool response."""
     action_id = str(uuid.uuid4())
     action = PendingAction(
         goal, kind, resume_arg, confidence, pending, verify,
         call_id=pending.gate_result.call_id if pending.gate_result else None,
+        label=label,
     )
     _PENDING[action_id] = action
     return _pending_response(action_id, action)
@@ -159,11 +165,18 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         response = response_for(action.kind, outcome, jev.name)
         after = await outcomes.foreground_safe(transport)
         graph_edge = {"from_node": before, "to_node": after} if (before or after) else None
-        _emit_outcome(
-            call_id=action.call_id, key=action.kind, gate=action.pending.gate_result,
-            executed_command=approved.command, response=response,
-            recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
-        )
+        if action.label is not None:
+            _emit_outcome(
+                label=action.label, gate=action.pending.gate_result,
+                executed_command=approved.command, response=response,
+                recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
+            )
+        else:
+            _emit_outcome(
+                call_id=action.call_id, key=action.kind, gate=action.pending.gate_result,
+                executed_command=approved.command, response=response,
+                recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
+            )
         return await _with_screenshot(response, include=include_screenshot)
 
 

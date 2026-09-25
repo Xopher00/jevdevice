@@ -36,6 +36,15 @@ from jevdevice.jev import Choice, Noul, Question, Score
 DEFAULT_VERSION = "v1"
 ENV_VERSION = "JEV_QUESTION_SET"  # named knob: select which frozen set the runtime consumes
 
+# Confidence-gated picks pool onto the "pick" calibration unit (QuestionSet.unit).
+# type_value.pick, dumpsys_query.pick, dumpsys_field.pick, cli.pick excluded on
+# purpose: not confidence-gated / accept_any_fitting skips the gate for them.
+CONFIDENCE_GATED_PICK_QIDS = frozenset({
+    "kind.pick", "kind.pick_screen", "tap.pick", "long_press.pick", "type_field.pick",
+    "scroll_to_find.pick", "swipe.pick", "keyevent.pick", "dnd.pick", "open_app.pick",
+    "toggle.service", "toggle.enabled", "toggle.resolve_status.pick",
+})
+
 
 class CompiledQuestionError(RuntimeError):
     """Raised when a question id is unknown, a required slot is missing, or the
@@ -178,18 +187,25 @@ class QuestionSet:
     def unit(self, question_id: str) -> tuple[str, str] | None:
         """`(calib_group, scale)` for core's optional `Vocabulary.unit()` hook:
         every "safe"-family gate noul pools onto one "gate" unit (H6) --
-        budget.py's gate_threshold is one knob per engine, not one per qid."""
+        budget.py's gate_threshold is one knob per engine, not one per qid.
+        Confidence-gated picks pool onto "pick"; every *.fit noul onto "fit"."""
         if question_id == "gate.safe.default" or question_id.endswith((".safe", ".safe_fused")):
             return "gate", "noul_p"
+        if question_id in CONFIDENCE_GATED_PICK_QIDS:
+            return "pick", "confidence"
+        if question_id.endswith(".fit"):
+            return "fit", "noul_p"
         return None
 
     def fit_questions(
-        self, question_id: str, candidates, describe=lambda c: c, *, generated_source: str | None = None,
+        self, question_id: str, candidates, describe=lambda c: c, *,
+        generated_source: str | None = None, qid: str | None = None,
     ) -> dict[str, Question]:
         """The fit_{i} Noul family (narrowing.fit_questions' phrasing source).
         generated_source != None marks the WHOLE family as an escape-hatch
-        generation (a caller overrode the wording) -- journaled, promotable."""
-        return fit_questions_from(self.text(question_id), candidates, describe, generated_source=generated_source)
+        generation (a caller overrode the wording) -- journaled, promotable.
+        qid, when given, tags each fit_i for calibration (unit() -> "fit")."""
+        return fit_questions_from(self.text(question_id), candidates, describe, generated_source=generated_source, qid=qid)
 
 
 _cache: dict[str, QuestionSet] = {}
@@ -229,8 +245,11 @@ def choice(question_id: str, criteria: dict[str, str | None], **slots: object) -
     return load().choice(question_id, criteria=criteria, **slots)
 
 
-def fit_questions(question_id: str, candidates, describe=lambda c: c, *, generated_source: str | None = None) -> dict[str, Question]:
-    return load().fit_questions(question_id, candidates, describe, generated_source=generated_source)
+def fit_questions(
+    question_id: str, candidates, describe=lambda c: c, *,
+    generated_source: str | None = None, qid: str | None = None,
+) -> dict[str, Question]:
+    return load().fit_questions(question_id, candidates, describe, generated_source=generated_source, qid=qid)
 
 
 def unit(question_id: str) -> tuple[str, str] | None:
@@ -243,18 +262,26 @@ def _placeholders(template: str) -> list[str]:
     return [name for _, name, _, _ in string.Formatter().parse(template) if name]
 
 
-def fit_questions_from(instructions: str, candidates, describe=lambda c: c, *, generated_source: str | None = None) -> dict[str, Question]:
+def fit_questions_from(
+    instructions: str, candidates, describe=lambda c: c, *,
+    generated_source: str | None = None, qid: str | None = None,
+) -> dict[str, Question]:
     """Shared fit_{i} builder: one "does this candidate really fit" Noul per
     candidate, keyed fit_0..n in candidate order. generated_source != None
-    marks the family as runtime-generated (escape hatch), which ask() journals."""
+    marks the family as runtime-generated (escape hatch), which ask() journals.
+    qid, when given (and generated_source is None), tags each fit_i with the
+    same mechanism as noul()/choice() -- the instructions text is unchanged,
+    only the (excluded-from-wire) qid/vocab_version marker fields are added."""
     out: dict[str, Question] = {}
+    version = load().version if qid else ""
     for i, candidate in enumerate(candidates):
         formatted = instructions.format(candidate=describe(candidate))
-        out[f"fit_{i}"] = (
-            GeneratedNoul(instructions=formatted, hatched_from=generated_source)
-            if generated_source
-            else Noul(instructions=formatted)
-        )
+        if generated_source:
+            out[f"fit_{i}"] = GeneratedNoul(instructions=formatted, hatched_from=generated_source)
+        elif qid:
+            out[f"fit_{i}"] = _tag(TaggedNoul, qid, version, instructions=formatted)
+        else:
+            out[f"fit_{i}"] = Noul(instructions=formatted)
     return out
 
 

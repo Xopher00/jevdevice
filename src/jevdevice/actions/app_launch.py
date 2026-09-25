@@ -56,6 +56,8 @@ class LaunchOutcome:
     # Journal linkage: the pick's round-2 ground ask, so the outcome row (emitted
     # by mcp_server for this ungated kind) joins the decision row that chose it.
     call_id: str | None = None
+    label_keys: tuple[str, ...] = ()  # the executed launch pick's fit_i
+    gate_key: str | None = None  # ungated: always None
 
 
 async def launch_app_for_goal(jev: JudgeEngine, device: Device, goal: str, *, verbose: bool = True) -> LaunchOutcome:
@@ -68,15 +70,16 @@ async def launch_app_for_goal(jev: JudgeEngine, device: Device, goal: str, *, ve
         jev, goal, packages,
         instructions=question_sets.text("open_app.pick"),
         fit_instructions=question_sets.text("open_app.fit"),
-        pick_qid="open_app.pick",
+        pick_qid="open_app.pick", fit_qid="open_app.fit",
     )
     if verbose:
         print(f"shortlist: {verdict.shortlist}")
         print(f"Jev picked: {verdict.choice} (confidence {verdict.confidence:.2f}, fit {verdict.fit:.2f})")
+    label_keys = (verdict.fit_key,) if verdict.fit_key else ()
     if not verdict.ok:
         if verbose:
             print(f"=== ESCALATED === {'; '.join(verdict.reasons)}")
-        return LaunchOutcome(None, verdict.confidence, False, 0.0, 0, "", tuple(verdict.reasons), call_id=verdict.call_id)
+        return LaunchOutcome(None, verdict.confidence, False, 0.0, 0, "", tuple(verdict.reasons), call_id=verdict.call_id, label_keys=label_keys)
     package = verdict.choice
 
     await device.run(f"monkey -p {package} 1")
@@ -84,4 +87,4 @@ async def launch_app_for_goal(jev: JudgeEngine, device: Device, goal: str, *, ve
     if verbose:
         print(f"foreground: {observed}")
         print(f"goal met: {launched} (noul={satisfied:.2f}, after {attempts} attempt(s))")
-    return LaunchOutcome(package, verdict.confidence, launched, satisfied, attempts, observed, call_id=verdict.call_id)
+    return LaunchOutcome(package, verdict.confidence, launched, satisfied, attempts, observed, call_id=verdict.call_id, label_keys=label_keys)
