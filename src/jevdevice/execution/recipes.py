@@ -26,23 +26,30 @@ import json
 import math
 import os
 import re
+import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 
+import yaml
 from typesymbolic.journal import OUTCOME
 from typesymbolic.labels import VERDICT
 
+from jevdevice.journal.decision_log import goal_id_for
 from jevdevice.question_sets import load as load_question_set
 
 DEFAULT_RECIPES_DIR = Path.home() / ".jevdevice" / "recipes"
 ENV_RECIPES_DIR = "JEV_RECIPES_DIR"
 RECIPES_FILE = "recipes.json"
+BACKUP_FILE = "recipes.json.bak"
 
 EMBED_DIM = 128          # hashed bag-of-tokens dimensionality
 RETRIEVAL_FLOOR = 0.55   # min cosine similarity for a recipe hit (tunable on dev data)
 MAX_CHAIN_GAP_S = 1800   # a chain is one run: rows farther apart than this are separate sessions
+# These kinds now run a real post-action screen check (see dispatch.py); a row from
+# before that change has only an exit code, so it can't be trusted as a recipe step.
+CHECKED_KINDS = frozenset({"keyevent", "swipe", "set_dnd"})
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
@@ -175,6 +182,8 @@ def recipes_from_journal(
             if verdict_status.get(row.get("call_id")) == "verified"
             and row.get("kind")
             and (row.get("executed_command") or row.get("graph_edge"))
+            # checked kinds need a real post-action satisfied verdict, not just exit code 0
+            and (row.get("kind") not in CHECKED_KINDS or row.get("satisfied") is not None)
         ]
         chain = [step for step in _compress(chain) if step.kind]
         if not chain:
@@ -197,6 +206,82 @@ def verify_recipe(recipe: Recipe, journal, *, rows: list[dict] | None = None) ->
         if row.get("type") == VERDICT and row.get("status") == "verified"
     }
     return all(step.call_id in verified_call_ids for step in recipe.steps if step.call_id)
+
+
+# --- rebuild ---------------------------------------------------------------------
+
+@dataclass
+class RebuildReport:
+    n_recipes: int
+    n_new: int              # goal_ids not already in the store before this rebuild
+    skipped_heldout: int
+    skipped_excluded: int
+    dropped_unverified: int
+
+
+def _rebuild_candidates(
+    journal, *, heldout_goal_ids: frozenset[str], exclude: frozenset[str], rows: list[dict] | None,
+) -> tuple[dict[str, Recipe], int, int, int]:
+    """Filter-then-verify pass shared by `rebuild()` and the CLI's dry-run
+    preview. Held-out/excluded goals are filtered from the rows before
+    `recipes_from_journal` ever sees them -- filtering, not the raise that
+    function does, because an interactive rebuild must not abort."""
+    rows = list(rows if rows is not None else journal.replay())
+    drop = frozenset(heldout_goal_ids) | frozenset(exclude)
+    outcome_goal_ids = {row["goal_id"] for row in rows if row.get("type") == OUTCOME and row.get("goal_id")}
+    skipped_heldout = len(outcome_goal_ids & heldout_goal_ids)
+    skipped_excluded = len(outcome_goal_ids & frozenset(exclude))
+    filtered_rows = [row for row in rows if row.get("type") != OUTCOME or row.get("goal_id") not in drop]
+    candidates = recipes_from_journal(journal, rows=filtered_rows)
+    verified = {goal_id: recipe for goal_id, recipe in candidates.items()
+                if verify_recipe(recipe, journal, rows=filtered_rows)}
+    dropped_unverified = len(candidates) - len(verified)
+    return verified, skipped_heldout, skipped_excluded, dropped_unverified
+
+
+def rebuild(
+    store: RecipeStore, journal, *, heldout_goal_ids: frozenset[str] = frozenset(),
+    exclude: frozenset[str] = frozenset(), rows: list[dict] | None = None, dry_run: bool = False,
+) -> RebuildReport:
+    """Rebuild the store from the current journal and REPLACE its contents
+    (not merge): a recipe that no longer replays verified must not survive.
+    `dry_run`: compute and report only, no backup, no write."""
+    verified, skipped_heldout, skipped_excluded, dropped_unverified = _rebuild_candidates(
+        journal, heldout_goal_ids=heldout_goal_ids, exclude=exclude, rows=rows,
+    )
+    n_new = len(set(verified) - {recipe.recipe_id for recipe in store.all()})
+    if not dry_run:
+        if store.path.exists():
+            shutil.copy2(store.path, store.path.with_name(BACKUP_FILE))
+        store.replace(verified)
+    return RebuildReport(
+        n_recipes=len(verified), n_new=n_new, skipped_heldout=skipped_heldout,
+        skipped_excluded=skipped_excluded, dropped_unverified=dropped_unverified,
+    )
+
+
+def resolve_heldout_and_exclusions() -> tuple[frozenset[str], frozenset[str]]:
+    """Held-out goal ids + operator exclusions, without importing eval/ into
+    the package. Held-out replicates eval/phases/splitguard.heldout_goal_ids()
+    exactly: eval/goals.yaml entries with split=="heldout", hashed with the
+    same goal_id_for; exclusions come from build_card.json's
+    "operator_exclusions" (eval/phases/build_recipes.py's own output), if it
+    exists. Both are empty when eval/ isn't present in this checkout."""
+    repo_root = Path(__file__).resolve().parents[3]
+    heldout: set[str] = set()
+    goals_file = repo_root / "eval" / "goals.yaml"
+    if goals_file.exists():
+        data = yaml.safe_load(goals_file.read_text()) or {}
+        for family_entries in data.values():
+            for entry in family_entries:
+                if entry.get("split") == "heldout":
+                    heldout.add(goal_id_for(entry["goal"]))
+    exclude: set[str] = set()
+    build_card = repo_root / "eval" / "phases" / "recipes" / "build_card.json"
+    if build_card.exists():
+        card = json.loads(build_card.read_text())
+        exclude.update(card.get("operator_exclusions", []))
+    return frozenset(heldout), frozenset(exclude)
 
 
 # --- store ---------------------------------------------------------------------
@@ -229,6 +314,11 @@ class RecipeStore:
         self._recipes[recipe.recipe_id] = recipe
         self.save()
 
+    def replace(self, recipes: dict[str, Recipe]) -> None:
+        """Wholesale replace (rebuild semantics), then save."""
+        self._recipes = dict(recipes)
+        self.save()
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {goal_id: recipe.to_dict() for goal_id, recipe in self._recipes.items()}
@@ -248,9 +338,10 @@ class RecipeStore:
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI
-    """`python -m jevdevice.execution.recipes list` / `match "goal text"`. Building from
-    the journal is an eval-script job (eval/phases/build_recipes.py) because
-    the dev/held-out split guard needs eval/goals.yaml."""
+    """`python -m jevdevice.execution.recipes list` / `match "goal text"` /
+    `rebuild [--dry-run]`. `eval/phases/build_recipes.py` remains the
+    eval-provenance build (writes build_card.json); `rebuild` is the runtime
+    demo/operator path over the same journal and split guard."""
     import sys
 
     args = list(sys.argv[1:] if argv is None else argv)
@@ -264,5 +355,25 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI
         print(json.dumps({"matched": hit is not None, "score": None if hit is None else round(hit[1], 3),
                           "recipe_id": None if hit is None else hit[0].recipe_id}))
         return 0
-    print("usage: python -m jevdevice.execution.recipes [list] | match '<goal text>'", file=sys.stderr)
+    if args[0] == "rebuild":
+        from jevdevice.journal.decision_log import get_journal
+
+        dry_run = "--dry-run" in args[1:]
+        heldout, exclude = resolve_heldout_and_exclusions()
+        journal = get_journal()
+        rows = list(journal.replay())  # one scan, shared by the preview and the report below
+        candidates, *_ = _rebuild_candidates(journal, heldout_goal_ids=heldout, exclude=exclude, rows=rows)
+        report = rebuild(store, journal, heldout_goal_ids=heldout, exclude=exclude, rows=rows, dry_run=dry_run)
+        print(json.dumps(asdict(report), indent=2))
+        print(json.dumps({
+            "goals": sorted({recipe.goal for recipe in candidates.values()}),
+            "kinds": sorted({step.kind for recipe in candidates.values() for step in recipe.steps}),
+        }, indent=2))
+        return 0
+    print("usage: python -m jevdevice.execution.recipes [list] | match '<goal text>' | rebuild [--dry-run]",
+          file=sys.stderr)
     return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -181,7 +181,7 @@ def test_builder_reads_kind_from_extra_not_the_answer_key(monkeypatch, tmp_path)
     goal = "swipe to unlock"
     with decision_log.goal_scope(goal):
         outcomes.record_action(call_id="c1", key="pick", kind="swipe",
-                               response={"status": "ok"}, executed_command="input swipe 0 0 1 1")
+                               response={"status": "ok", "satisfied": 0.9}, executed_command="input swipe 0 0 1 1")
     recipe = recipes_from_journal(journal)[goal_id_for(goal)]
     assert recipe.steps[0].kind == "swipe"
 
@@ -258,6 +258,127 @@ async def test_multi_step_run_shares_one_episode_id(journal_recorder, tmp_path) 
     assert len(episode_ids) == 1 and next(iter(episode_ids))
     executed_rows = [r for r in journal_recorder.outcomes if r.get("key") in ("open_app", "tap")]
     assert len(executed_rows) == 2  # one row per executed command
+
+
+# --- recall(): T0-only fast path, close-match-safe -----------------------------
+
+async def test_recall_exact_hit_replays_stored_chain(journal_recorder, tmp_path) -> None:
+    goal = "open the camera app"
+    recipe = _recipe(goal, [
+        RecipeStep("open_app", goal, "monkey -p com.camera 1", "home", "com.camera", "c1"),
+        RecipeStep("tap", goal, "input tap 5 700", "com.camera", "com.camera", "c2"),
+    ])
+    store = RecipeStore(tmp_path)
+    store.upsert(recipe)
+    ran: list[tuple[str, str]] = []
+
+    async def executor(jev, transport, kind, step_goal, **kw):
+        ran.append((kind, step_goal))
+        return planner._step(kind, step_goal, "verified")
+
+    result = await planner.recall(FakeJudge([]), None, goal, executor=executor, store=store)
+    assert result is not None and result.tier == 0 and result.status == "resolved"
+    assert result.exact is True and result.recipe_goal == goal
+    assert ran == [("open_app", goal), ("tap", goal)]
+
+
+async def test_recall_close_single_step_hit_runs_the_typed_goal(journal_recorder, tmp_path) -> None:
+    stored_goal = "tap the 9 button"
+    typed_goal = "tap the 7 button"
+    recipe = _recipe(stored_goal, [RecipeStep("tap", stored_goal, "input tap 9 9", "calc", "calc", "c1")])
+    store = RecipeStore(tmp_path)
+    store.upsert(recipe)
+    ran: list[tuple[str, str]] = []
+
+    async def executor(jev, transport, kind, step_goal, **kw):
+        ran.append((kind, step_goal))
+        return planner._step(kind, step_goal, "verified")
+
+    result = await planner.recall(FakeJudge([]), None, typed_goal, executor=executor, store=store)
+    assert result is not None and result.exact is False
+    assert ran == [("tap", typed_goal)]  # never the stored "tap the 9 button"
+
+
+async def test_recall_close_multi_step_hit_returns_none(journal_recorder, tmp_path) -> None:
+    stored_goal = "set an alarm at 9"
+    recipe = _recipe(stored_goal, [
+        RecipeStep("open_app", stored_goal, "monkey -p com.clock 1", "home", "com.clock", "c1"),
+        RecipeStep("tap", stored_goal, "input tap 5 700", "com.clock", "com.clock", "c2"),
+    ])
+    store = RecipeStore(tmp_path)
+    store.upsert(recipe)
+
+    async def executor(jev, transport, kind, step_goal, **kw):  # pragma: no cover
+        raise AssertionError("a multi-step close hit must never replay at tier 0")
+
+    result = await planner.recall(FakeJudge([]), None, "set an alarm at 8", executor=executor, store=store)
+    assert result is None
+
+
+async def test_recall_failed_step_returns_none(journal_recorder, tmp_path) -> None:
+    goal = "open the camera app"
+    recipe = _recipe(goal, [RecipeStep("open_app", goal, "monkey -p com.camera 1", "home", "com.camera", "c1")])
+    store = RecipeStore(tmp_path)
+    store.upsert(recipe)
+
+    async def executor(jev, transport, kind, step_goal, **kw):
+        return planner._step(kind, step_goal, "escalated")
+
+    result = await planner.recall(FakeJudge([]), None, goal, executor=executor, store=store)
+    assert result is None
+
+
+async def test_recall_miss_returns_none(journal_recorder, tmp_path) -> None:
+    store = RecipeStore(tmp_path)
+
+    async def executor(jev, transport, kind, step_goal, **kw):  # pragma: no cover
+        raise AssertionError("no recipe: executor must never run")
+
+    result = await planner.recall(FakeJudge([]), None, "an entirely new goal", executor=executor, store=store)
+    assert result is None
+
+
+async def test_resolve_t0_single_step_close_hit_uses_typed_goal(journal_recorder, tmp_path) -> None:
+    stored_goal = "tap the 9 button"
+    typed_goal = "tap the 7 button"
+    recipe = _recipe(stored_goal, [RecipeStep("tap", stored_goal, "input tap 9 9", "calc", "calc", "c1")])
+    store = RecipeStore(tmp_path)
+    store.upsert(recipe)
+    ran: list[tuple[str, str]] = []
+
+    async def executor(jev, transport, kind, step_goal, **kw):
+        ran.append((kind, step_goal))
+        return planner._step(kind, step_goal, "verified")
+
+    result = await planner.resolve(FakeJudge([]), None, typed_goal, executor=executor, store=store)
+    assert result.tier == 0 and result.status == "resolved"
+    assert ran == [("tap", typed_goal)]
+
+
+# --- attended_executor: on_pending/tier/recipe_id reach run_kind ---------------
+
+async def test_attended_executor_passes_on_pending_tier_recipe_id_and_returns_response(monkeypatch) -> None:
+    from jevdevice.execution import dispatch
+
+    seen: dict = {}
+
+    async def fake_run_kind(jev, device, kind, goal, *, on_pending=None, tier=None, recipe_id=None, **kw):
+        seen.update(kind=kind, goal=goal, on_pending=on_pending, tier=tier, recipe_id=recipe_id)
+        return {"status": "ok", "element": "7"}
+
+    # planner.py imports run_kind by name (`from .dispatch import ... run_kind`),
+    # so the module-level attribute both call sites resolve at call time.
+    monkeypatch.setattr(dispatch, "run_kind", fake_run_kind)
+    monkeypatch.setattr(planner, "run_kind", fake_run_kind)
+
+    def on_pending(*args, **kwargs):  # pragma: no cover - not invoked, just identity-checked
+        pass
+
+    executor = planner.attended_executor(on_pending)
+    step = await executor(SimpleNamespace(name="jev"), None, "tap", "tap the 7 button", tier=0, recipe_id="r1")
+    assert seen == {"kind": "tap", "goal": "tap the 7 button", "on_pending": on_pending, "tier": 0, "recipe_id": "r1"}
+    assert step.succeeded is True
+    assert step.detail["response"] == {"status": "ok", "element": "7"}
 
 
 # --- tier 1: bounded adapt (drop-only) ----------------------------------------------
@@ -424,7 +545,8 @@ def _fake_handler(*, ready: CommandVariant | None, call_id: str | None = "cid-ga
             return SimpleNamespace(ready=ready, pending=None, reasons=(), gate_result=gate)
 
         async def execute(self, jev, transport, goal, proposal, command, **kw):
-            return 0  # swipe/keyevent/set_dnd executors return the exit code
+            from jevdevice.execution import dispatch
+            return dispatch.CheckedCommandOutcome(acted_on=None, exit_code=0, satisfied=0.9)
 
     return FakeHandler()
 

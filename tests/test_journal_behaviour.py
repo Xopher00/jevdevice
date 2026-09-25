@@ -202,8 +202,9 @@ async def test_dispatch_run_kind_labels_the_pick_not_the_kind_or_gate(tmp_path: 
     assert journal.labeled_pairs("gate", "noul_p", engine="jev", any_revision=True) == []
 
 
-async def _exit_zero() -> int:
-    return 0
+async def _exit_zero():
+    from jevdevice.execution.dispatch import CheckedCommandOutcome
+    return CheckedCommandOutcome(acted_on="a", exit_code=0, satisfied=0.9)
 
 
 # --- every ask() call site carries a phase label -----------------------------

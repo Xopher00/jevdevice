@@ -29,6 +29,7 @@ from jevdevice.actions.services import (
     take_screenshot,
 )
 from jevdevice.actions.ui import (
+    _verify_after_action,
     execute_tap,
     execute_type,
     propose_long_press,
@@ -115,6 +116,25 @@ async def pick_kind(jev: JudgeEngine, goal: str, device: Device | None = None, *
 
 
 @dataclass
+class CheckedCommandOutcome:
+    """keyevent/swipe/set_dnd: an exit code alone can't tell "backspace" from
+    KEYCODE_BACK working -- satisfied is None only when verify=False skipped the ask."""
+    acted_on: str | None
+    exit_code: int
+    satisfied: float | None
+
+
+async def _execute_checked_command(jev, transport, goal, proposal, command, *, verify: bool = True, **kw) -> CheckedCommandOutcome:
+    # proposal.pick is the closed-set choice (key/direction/mode); real evidence for the verify ask.
+    acted_on = getattr(proposal, "pick", None) or command.command
+    exit_code = await execute_command(transport, command)
+    if not verify:
+        return CheckedCommandOutcome(acted_on, exit_code, None)
+    satisfied = await _verify_after_action(jev, transport, goal, acted_on, delays=(0.0, 0.0, 0.0), verbose=False)
+    return CheckedCommandOutcome(acted_on, exit_code, satisfied)
+
+
+@dataclass
 class KindHandler:
     """Normalizes one kind's real propose/execute signatures into one shape -- the single
     source run_toolkit (CLI) and mcp_server.py's device_do/device_approve (MCP) both dispatch
@@ -147,17 +167,17 @@ KIND_TABLE: dict[str, KindHandler] = {
     ),
     "keyevent": KindHandler(
         propose=lambda jev, transport, goal: propose_keyevent(jev, goal, verbose=False),
-        execute=lambda jev, transport, goal, proposal, command, **kw: execute_command(transport, command),
+        execute=lambda jev, transport, goal, proposal, command, *, verify=True, **kw: _execute_checked_command(jev, transport, goal, proposal, command, verify=verify),
         resume_arg=lambda proposal: None,
     ),
     "swipe": KindHandler(
         propose=lambda jev, transport, goal: propose_swipe(jev, transport, goal, verbose=False),
-        execute=lambda jev, transport, goal, proposal, command, **kw: execute_command(transport, command),
+        execute=lambda jev, transport, goal, proposal, command, *, verify=True, **kw: _execute_checked_command(jev, transport, goal, proposal, command, verify=verify),
         resume_arg=lambda proposal: None,
     ),
     "set_dnd": KindHandler(
         propose=lambda jev, transport, goal: propose_dnd(jev, goal, verbose=False),
-        execute=lambda jev, transport, goal, proposal, command, **kw: execute_command(transport, command),
+        execute=lambda jev, transport, goal, proposal, command, *, verify=True, **kw: _execute_checked_command(jev, transport, goal, proposal, command, verify=verify),
         resume_arg=lambda proposal: None,
     ),
 }
@@ -270,8 +290,10 @@ def _dumpsys_response(outcome, engine_name: str) -> dict:
     }
 
 
-def _exit_code_response(outcome, engine_name: str) -> dict:
-    return {"status": "ok" if outcome == 0 else "unverified", "exit_code": outcome}
+def _checked_command_response(outcome: CheckedCommandOutcome, engine_name: str) -> dict:
+    # verify=False: satisfied is None, never "ok" -- mirrors execute_tap's verify=False contract.
+    ok = outcome.satisfied is not None and outcome.exit_code == 0 and outcome.satisfied >= current_profile(engine_name).noul_floor
+    return {"status": "ok" if ok else "unverified", "exit_code": outcome.exit_code, "satisfied": outcome.satisfied}
 
 
 def _scroll_response(outcome, engine_name: str) -> dict:
@@ -297,9 +319,9 @@ RESPONSE_FOR = {
     "tap": _tap_response,
     "long_press": _tap_response,
     "type_text": _tap_response,
-    "keyevent": _exit_code_response,
-    "swipe": _exit_code_response,
-    "set_dnd": _exit_code_response,
+    "keyevent": _checked_command_response,
+    "swipe": _checked_command_response,
+    "set_dnd": _checked_command_response,
     "open_app": _launch_response,
     "dumpsys": _dumpsys_response,
     "scroll_to_find": _scroll_response,
@@ -450,7 +472,7 @@ async def run_kind(
             # hook's return is awaited only when it is actually awaitable.
             hooked = on_pending(goal, kind, handler.resume_arg(proposal),
                                 getattr(proposal, "confidence", 0.0), proposal.pending, verify,
-                                label=label_target(proposal, kind))
+                                label=label_target(proposal, kind), tier=tier, recipe_id=recipe_id)
             return await hooked if inspect.isawaitable(hooked) else hooked
     if command is None:
         outcomes.record_action(device=device, call_id=call_id, key=PICK_KEY_FOR.get(kind, "pick"),

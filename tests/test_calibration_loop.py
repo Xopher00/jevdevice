@@ -51,7 +51,7 @@ class FakeTransport:
 
     name = "fake-device"
 
-    def __init__(self, results: dict[str, RunResult], dump_xml: str = "") -> None:
+    def __init__(self, results: dict[str, RunResult], dump_xml: str = "<hierarchy/>") -> None:
         self._results = results
         self._dump_xml = dump_xml
 
@@ -184,6 +184,7 @@ async def test_keyevent_through_run_kind_labels_pick_and_gate_no_fit() -> None:
     judge = FakeJudge("jev", [
         {"pick": _choice("VOLUME_UP", {"VOLUME_UP": 0.9}), "any_fit": _noul(0.9)},
         {"safe": _noul(0.9)},
+        {"satisfied": _noul(0.9)},
     ])
     transport = FakeTransport({"input keyevent KEYCODE_VOLUME_UP": RunResult(exit_code=0)})
 
@@ -201,6 +202,7 @@ async def test_keyevent_nonzero_exit_code_labels_failed() -> None:
     judge = FakeJudge("jev", [
         {"pick": _choice("VOLUME_UP", {"VOLUME_UP": 0.9}), "any_fit": _noul(0.9)},
         {"safe": _noul(0.9)},
+        {"satisfied": _noul(0.9)},
     ])
     transport = FakeTransport({"input keyevent KEYCODE_VOLUME_UP": RunResult(exit_code=1)})
 
@@ -310,7 +312,7 @@ async def test_approval_resume_labels_pick_and_gate_not_the_kind_name() -> None:
         "dumpsys -l": RunResult(stdout="Currently running services:\n  bluetooth_state\n"),
     })
 
-    async def approve_hook(goal, kind, resume_arg, confidence, pending, verify, *, label):
+    async def approve_hook(goal, kind, resume_arg, confidence, pending, verify, *, label, **_):
         # Mirrors mcp_server.device_approve: run the already-gated command,
         # record the device verdict against run_kind's own LabelTarget.
         handler = dispatch.KIND_TABLE[kind]

@@ -22,6 +22,7 @@ verdict counts as an escalation -- unattended runs cannot approve anything.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from typesymbolic.domain import ActStep
@@ -61,6 +62,8 @@ class PlannerResult:
     recipe_score: float | None = None
     steps: list[ActStep] = field(default_factory=list)
     tier_path: list[int] = field(default_factory=list)  # tiers attempted, in order
+    recipe_goal: str | None = None  # the matched recipe's own goal text (recall() only)
+    exact: bool | None = None       # recall(): True=goal_id hit, False=best_match hit
 
 
 def _step(kind: str | None, goal: str, status: str) -> ActStep:  # (kind, goal, status) onto core's ActStep
@@ -74,6 +77,21 @@ async def run_kind_unattended(
     """One action through the shared dispatch, with no approval hook."""
     response = await run_kind(jev, device, kind, goal, tier=tier, recipe_id=recipe_id)
     return _step(kind, goal, outcomes.verdict_from_response(response).status)
+
+
+def attended_executor(on_pending):
+    """Same call shape as run_kind_unattended, but a needs_approval verdict
+    goes to `on_pending` instead of becoming an escalation. The full response
+    dict rides in ActStep.detail so an attended caller (the demo) can render
+    it, not just the verified/failed status."""
+    async def _executor(
+        jev, device, kind: str, goal: str, *, tier: int | None = None, recipe_id: str | None = None,
+    ) -> ActStep:
+        response = await run_kind(jev, device, kind, goal, on_pending=on_pending, tier=tier, recipe_id=recipe_id)
+        step = _step(kind, goal, outcomes.verdict_from_response(response).status)
+        step.detail["response"] = response
+        return step
+    return _executor
 
 
 def _planner_row(status: str, *, tier: int, recipe_id: str | None = None, reasons=None) -> None:
@@ -147,6 +165,58 @@ async def _stepwise_loop(jev, device, goal: str, *, executor) -> tuple[list[ActS
     return results, False
 
 
+@contextmanager
+def _scoped_run(goal: str):
+    """The goal/episode scope every rows-producing entry point (resolve,
+    recall) opens once at its own top, so their rows join."""
+    with goal_scope(goal), outcomes.episode_scope(Episode(decision_log.get_journal()).episode_id):
+        yield
+
+
+def _tier0_candidate(
+    goal: str, store: RecipeStore,
+) -> tuple[Recipe | None, float | None, list[tuple[str, str]] | None]:
+    """(recipe, score, chain) for tier 0. An exact hit (this goal's own
+    history) replays its stored step goals as-is. A close (best_match) hit
+    only replays here when it has exactly one step, and then with the TYPED
+    goal, never the stored text -- every target is re-found from what was
+    typed. A multi-step close hit comes back with chain=None: it's tier 1's
+    job (adapt, with a per-step fit check), not tier 0's."""
+    exact = store.get(goal_id_for(goal))
+    if exact is not None:
+        return exact, None, [(step.kind, step.goal) for step in exact.steps]
+    hit = store.best_match(goal)
+    if hit is None:
+        return None, None, None
+    recipe, score = hit
+    if len(recipe.steps) != 1:
+        return recipe, score, None
+    return recipe, score, [(recipe.steps[0].kind, goal)]
+
+
+async def recall(
+    jev, device, goal: str, *, executor, store: RecipeStore | None = None,
+) -> PlannerResult | None:
+    """Tier 0 only, for an attended caller that wants a fast path before
+    falling back to the full resolve() tiers on any miss. Returns None on no
+    hit, a multi-step close hit (see _tier0_candidate), or a step that
+    doesn't verify -- the caller decides what "fall back" means."""
+    store = store or RecipeStore()
+    recipe, score, chain = _tier0_candidate(goal, store)
+    if recipe is None or chain is None:
+        return None
+    with _scoped_run(goal):
+        steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=0, recipe_id=recipe.recipe_id)
+        if failed is not None:
+            d = failed.detail
+            _planner_row("planner_fallthrough", tier=0, recipe_id=recipe.recipe_id,
+                         reasons=[f"step {failed.name!r} for {d.get('goal')!r} ended {d.get('status')}"])
+            return None
+        _planner_row("planner_resolved", tier=0, recipe_id=recipe.recipe_id)
+        return PlannerResult(0, "resolved", recipe.recipe_id, score, steps, [0],
+                             recipe_goal=recipe.goal, exact=score is None)
+
+
 async def resolve(
     jev, device, goal: str, *, executor=None, store: RecipeStore | None = None,
 ) -> PlannerResult:
@@ -157,16 +227,12 @@ async def resolve(
     store = store or RecipeStore()
     tier_path: list[int] = []
     all_steps: list[ActStep] = []
-    with goal_scope(goal), outcomes.episode_scope(Episode(decision_log.get_journal()).episode_id):
-        # --- tier 0: recipe hit (exact goal id, else text-similarity match) --
-        recipe: Recipe | None = store.get(goal_id_for(goal))
-        score: float | None = None
-        if recipe is None and (hit := store.best_match(goal)) is not None:
-            recipe, score = hit
+    with _scoped_run(goal):
+        # --- tier 0: recipe hit (exact goal id, else close-match-safe) ------
+        recipe, score, chain = _tier0_candidate(goal, store)
         tier_path.append(0)
         adapt_from = 0  # chain index tier 1 resumes from: tier 0's verified prefix is done
-        if recipe is not None:
-            chain = [(step.kind, step.goal) for step in recipe.steps]
+        if recipe is not None and chain is not None:
             steps, failed = await _replay_chain(jev, device, chain, executor=executor, tier=0, recipe_id=recipe.recipe_id)
             all_steps.extend(steps)
             adapt_from = len(steps) - (1 if failed is not None else 0)
@@ -176,6 +242,9 @@ async def resolve(
             d = failed.detail
             _planner_row("planner_fallthrough", tier=0, recipe_id=recipe.recipe_id,
                          reasons=[f"step {failed.name!r} for {d.get('goal')!r} ended {d.get('status')}"])
+        elif recipe is not None:
+            _planner_row("planner_fallthrough", tier=0, recipe_id=recipe.recipe_id,
+                         reasons=["close multi-step match: deferred to tier 1 adapt, not replayed as-is"])
         else:
             _planner_row("planner_fallthrough", tier=0, reasons=["no recipe at or above the retrieval floor"])
 

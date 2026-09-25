@@ -78,9 +78,6 @@ EXAMPLES = [
     "set do not disturb to priority only",
 ]
 
-# Kinds whose response carries only the command's exit code: no post-action check runs.
-EXIT_CODE_ONLY = {"keyevent", "swipe", "set_dnd"}
-
 PHRASING = {
     "open_app": "open <app name>",
     "dumpsys": "what is my <battery level / wifi network>?",
@@ -446,6 +443,7 @@ def ask_approval(pending) -> bool:
 async def run_goal(jev, device: RecordingDevice, goal: str) -> None:
     from jevdevice.actions.services import take_screenshot
     from jevdevice.budget import current_profile
+    from jevdevice.execution import planner
     from jevdevice.execution.dispatch import (
         ACTION_KINDS,
         KIND_TABLE,
@@ -462,6 +460,48 @@ async def run_goal(jev, device: RecordingDevice, goal: str) -> None:
     device.screen_reads = 0
     calls_before, t0 = jev_requests(jev), time.monotonic()
     quiet = io.StringIO()  # swallows the pipeline's own debug prints; results are rendered below instead
+    status = console.status("  Working on the phone…", spinner="dots")
+    declined: list[str] = []
+
+    async def on_pending(goal, kind, resume_arg, confidence, pending, verify, *, label=None, tier=None,
+                         recipe_id=None):
+        """The MCP server's device_approve resume path, asked in the terminal instead."""
+        status.stop()
+        approved = ask_approval(pending)
+        call_id = pending.gate_result.call_id if pending.gate_result else None
+        if not approved:
+            declined.append(kind)
+            outcomes.record_action(device=device, call_id=call_id, key=kind, kind=kind, gate=pending.gate_result,
+                                   status="not_executed", decision="deny", tier=tier, recipe_id=recipe_id)
+            return {"status": "not_executed"}
+        status.start()
+        proposal = SimpleNamespace(element=resume_arg, service=resume_arg, confidence=confidence)
+        outcome, edge = await outcomes.graph_edge_around(device, lambda: KIND_TABLE[kind].execute(
+            jev, device, goal, proposal, pending.command, verify=verify, verbose=False))
+        response = response_for(kind, outcome, jev.name)
+        outcomes.record_action(device=device, call_id=call_id, key=kind, kind=kind, gate=pending.gate_result,
+                               executed_command=pending.command.command, response=response,
+                               graph_edge=edge, decision="approve", label=label, tier=tier, recipe_id=recipe_id)
+        return response
+
+    recipe, score, chain = planner._tier0_candidate(goal, recipe_store())
+    if recipe is not None and chain is not None:
+        match = "exact match" if score is None else f"close match {score:.0%}, run as you typed it"
+        row("Recalled", f"[{ACCENT}]\"{recipe.goal}\"[/] [dim]· {match} · no action-type pick needed[/]", bold=True)
+        row("Act", f"[dim]replay verified recipe: {' → '.join(kind for kind, _ in chain)}[/]", bold=True)
+        status.start()
+        try:
+            with contextlib.redirect_stdout(quiet):
+                result = await planner.recall(jev, device, goal, executor=planner.attended_executor(on_pending),
+                                              store=recipe_store())
+        finally:
+            status.stop()
+        if result is not None:
+            last = result.steps[-1]
+            return _render(last.detail["response"], jev, device, calls_before, t0, kind=last.name)
+        if declined:
+            return _render({"status": "not_executed"}, jev, device, calls_before, t0)
+        row("", "[yellow]the recipe didn't verify this time[/] [dim]· asking Jev fresh[/]")
 
     with goal_scope(goal):
         with console.status("  Understanding the goal (reading the screen, choosing an action type)…", spinner="dots"), \
@@ -493,27 +533,6 @@ async def run_goal(jev, device: RecordingDevice, goal: str) -> None:
             path.write_bytes(png)
             return _render({"status": "ok", "saved": str(path)}, jev, device, calls_before, t0)
 
-        status = console.status("  Working on the phone…", spinner="dots")
-
-        async def on_pending(goal, kind, resume_arg, confidence, pending, verify, *, label=None):
-            """The MCP server's device_approve resume path, asked in the terminal instead."""
-            status.stop()
-            approved = ask_approval(pending)
-            call_id = pending.gate_result.call_id if pending.gate_result else None
-            if not approved:
-                outcomes.record_action(device=device, call_id=call_id, key=kind, gate=pending.gate_result,
-                                       status="not_executed", decision="deny")
-                return {"status": "not_executed"}
-            status.start()
-            proposal = SimpleNamespace(element=resume_arg, service=resume_arg, confidence=confidence)
-            outcome, edge = await outcomes.graph_edge_around(device, lambda: KIND_TABLE[kind].execute(
-                jev, device, goal, proposal, pending.command, verify=verify, verbose=False))
-            response = response_for(kind, outcome, jev.name)
-            outcomes.record_action(device=device, call_id=call_id, key=kind, gate=pending.gate_result,
-                                   executed_command=pending.command.command, response=response,
-                                   graph_edge=edge, decision="approve", label=label)
-            return response
-
         status.start()
         try:
             with contextlib.redirect_stdout(quiet):
@@ -533,11 +552,8 @@ async def run_goal_safely(jev, device: RecordingDevice, goal: str) -> None:
 
 def _render(response: dict, jev, device: RecordingDevice, calls_before: int, t0: float, *,
             kind: str | None = None, explained: list[tuple[str, str]] = ()) -> None:
-    verified = "[green]✓ Done[/] [dim]· verified on the device[/]"
-    if kind in EXIT_CODE_ONLY:
-        verified = "[green]✓ Sent[/] [dim]· the phone accepted it (exit code only; the effect isn't re-checked)[/]"
     headline = {
-        "ok": verified,
+        "ok": "[green]✓ Done[/] [dim]· verified on the device[/]",
         "unverified": "[yellow]! Ran, but the result could not be confirmed[/]",
         "escalated": "[yellow]✗ Did not act[/] [dim]· not confident enough; nothing was changed[/]",
         "not_executed": "[dim]✗ Skipped · you declined; nothing was changed[/]",
@@ -570,6 +586,30 @@ def _footer(jev, device: RecordingDevice, calls_before: int, t0: float) -> None:
     calls, reads = jev_requests(jev) - calls_before, device.screen_reads
     row("", f"[dim]{calls} Jev call{'s' * (calls != 1)} · {reads} screen read{'s' * (reads != 1)} · "
             f"{time.monotonic() - t0:.1f}s[/]")
+
+
+_RECIPES: list = []
+
+
+def recipe_store():
+    """One store per session, so a rebuild on quit is what the next session recalls from."""
+    if not _RECIPES:
+        from jevdevice.execution.recipes import RecipeStore
+        _RECIPES.append(RecipeStore())
+    return _RECIPES[0]
+
+
+def rebuild_recipes() -> None:
+    """Rebuild recipes from every verified run in the journal (held-out eval goals and operator
+    exclusions skipped), replacing the store; the previous file is kept as recipes.json.bak."""
+    from jevdevice.execution.recipes import rebuild, resolve_heldout_and_exclusions
+    from jevdevice.journal import decision_log
+
+    heldout, exclude = resolve_heldout_and_exclusions()
+    with console.status("  Rebuilding recipes from verified runs (no Jev calls)…", spinner="dots"):
+        report = rebuild(recipe_store(), decision_log.get_journal(), heldout_goal_ids=heldout, exclude=exclude)
+    row("Recipes", f"{report.n_recipes} stored [dim]· {report.n_new} new · goals typed again reuse them "
+                   "without the action-type pick[/]")
 
 
 KNOB_NAMES = {
@@ -646,13 +686,14 @@ async def menu(jev, device) -> None:
         console.print(Rule(Text(" What would you like to do? ", style="bold"), style="dim", align="left"))
         console.print(f"  [bold {ACCENT}]1[/]  Guided tour   [dim]run a few ready-made commands, one at a time[/]")
         console.print(f"  [bold {ACCENT}]2[/]  Free mode     [dim]type your own commands[/]")
-        console.print(f"  [bold {ACCENT}]c[/]  Calibration   [dim]refit thresholds from what has been verified so far[/]")
+        console.print(f"  [bold {ACCENT}]c[/]  Calibration   [dim]refit thresholds and rebuild recipes from verified runs[/]")
         console.print(f"  [bold {ACCENT}]q[/]  Quit")
         choice = Prompt.ask("  Choose", choices=["1", "2", "c", "q"], default="1", console=console)
         if choice == "q":
             return
         if choice == "c":
             recalibrate(jev)
+            rebuild_recipes()
             continue
         await (guided_tour if choice == "1" else free_mode)(jev, device)
 
@@ -680,6 +721,7 @@ async def main() -> None:
     try:
         await menu(jev, device)
         recalibrate(jev)
+        rebuild_recipes()
     finally:
         await jev.aclose()
     console.print()

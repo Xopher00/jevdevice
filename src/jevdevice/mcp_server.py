@@ -48,6 +48,8 @@ class PendingAction:
     verify: bool = True
     call_id: str | None = None  # journal linkage: joins the outcome row to the gate's decision row
     label: LabelTarget | None = None
+    tier: int | None = None
+    recipe_id: str | None = None
 
 
 _PENDING: dict[str, PendingAction] = {}
@@ -65,7 +67,8 @@ def _pending_response(action_id: str, action: PendingAction) -> dict:
 
 def _store_pending(
     goal: str, kind: str, resume_arg: str | None, confidence: float, pending: Pending,
-    verify: bool = True, *, label: LabelTarget | None = None,
+    verify: bool = True, *, label: LabelTarget | None = None, tier: int | None = None,
+    recipe_id: str | None = None,
 ) -> dict:
     """dispatch.run_kind's on_pending hook: park the proposed action for a
     human and surface the approval prompt as the tool response."""
@@ -73,7 +76,7 @@ def _store_pending(
     action = PendingAction(
         goal, kind, resume_arg, confidence, pending, verify,
         call_id=pending.gate_result.call_id if pending.gate_result else None,
-        label=label,
+        label=label, tier=tier, recipe_id=recipe_id,
     )
     _PENDING[action_id] = action
     return _pending_response(action_id, action)
@@ -148,7 +151,7 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         return await _with_screenshot({"status": "error", "reason": f"unknown or already-resolved thread_id {thread_id!r}"}, include=include_screenshot)
     with goal_scope(action.goal):
         if decision != "approve":
-            _emit_outcome(call_id=action.call_id, key=action.kind, gate=action.pending.gate_result, status="not_executed", decision="deny")
+            _emit_outcome(call_id=action.call_id, key=action.kind, kind=action.kind, gate=action.pending.gate_result, status="not_executed", decision="deny")
             return await _with_screenshot({"status": "not_executed"}, include=include_screenshot)
 
         approved = action.pending.command
@@ -167,15 +170,17 @@ async def device_approve(thread_id: str, decision: str, command: str | None = No
         graph_edge = {"from_node": before, "to_node": after} if (before or after) else None
         if action.label is not None:
             _emit_outcome(
-                label=action.label, gate=action.pending.gate_result,
+                label=action.label, kind=action.kind, gate=action.pending.gate_result,
                 executed_command=approved.command, response=response,
                 recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
+                tier=action.tier, recipe_id=action.recipe_id,
             )
         else:
             _emit_outcome(
-                call_id=action.call_id, key=action.kind, gate=action.pending.gate_result,
+                call_id=action.call_id, key=action.kind, kind=action.kind, gate=action.pending.gate_result,
                 executed_command=approved.command, response=response,
                 recovery_command=recovery_command, graph_edge=graph_edge, decision="approve",
+                tier=action.tier, recipe_id=action.recipe_id,
             )
         return await _with_screenshot(response, include=include_screenshot)
 
