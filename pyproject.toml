@@ -28,11 +28,10 @@ dev = [
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
-# Local path source: typesymbolic is consumed AS COMMITTED (83d312b) --
-# jevdevice never carries uncommitted expectations about it. Core changes it
-# needs go to its agent via TSYM-MIGRATION-REPORT.md, never into the repo.
+# Pinned to a pushed revision: jevdevice never carries uncommitted expectations
+# about typesymbolic. Core changes it needs go to its agent via TSYM-MIGRATION-REPORT.md.
 [tool.uv.sources]
-typesymbolic = { path = "../typesymbolic" }
+typesymbolic = { git = "https://github.com/Xopher00/typesymbolic", rev = "7243620" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jevdevice"]

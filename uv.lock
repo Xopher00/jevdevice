@@ -653,7 +653,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0,<2" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "transformers", specifier = ">=4.48" },
-    { name = "typesymbolic", extras = ["jev"], directory = "../typesymbolic" },
+    { name = "typesymbolic", extras = ["jev"], git = "https://github.com/Xopher00/typesymbolic?rev=7243620" },
     { name = "uiautomator2", specifier = ">=3.7.0" },
 ]
 
@@ -2040,7 +2040,7 @@ wheels = [
 [[package]]
 name = "typesymbolic"
 version = "0.1.0"
-source = { directory = "../typesymbolic" }
+source = { git = "https://github.com/Xopher00/typesymbolic?rev=7243620#72436207e0623a14c902dff29989bc896087e21d" }
 dependencies = [
     { name = "pydantic" },
 ]
@@ -2048,20 +2048,6 @@ dependencies = [
 [package.optional-dependencies]
 jev = [
     { name = "typesafe-sdk" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.10,<3" },
-    { name = "typesafe-sdk", marker = "extra == 'jev'", specifier = ">=0.7,<1" },
-]
-provides-extras = ["jev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8.3,<9" },
-    { name = "pytest-asyncio", specifier = ">=0.25,<1" },
-    { name = "ruff", specifier = ">=0.16.8" },
 ]
 
 [[package]]
