@@ -653,7 +653,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0,<2" },
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "transformers", specifier = ">=4.48" },
-    { name = "typesymbolic", extras = ["jev"], git = "https://github.com/Xopher00/typesymbolic?rev=7243620" },
+    { name = "typesymbolic", extras = ["jev"], git = "https://github.com/Xopher00/typesymbolic?rev=85eed2d" },
     { name = "uiautomator2", specifier = ">=3.7.0" },
 ]
 
@@ -2040,7 +2040,7 @@ wheels = [
 [[package]]
 name = "typesymbolic"
 version = "0.1.0"
-source = { git = "https://github.com/Xopher00/typesymbolic?rev=7243620#72436207e0623a14c902dff29989bc896087e21d" }
+source = { git = "https://github.com/Xopher00/typesymbolic?rev=85eed2d#85eed2dcf40b410214b737a67e7eb2ce1cc0e438" }
 dependencies = [
     { name = "pydantic" },
 ]

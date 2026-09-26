@@ -175,7 +175,7 @@ async def test_dispatch_run_kind_labels_the_pick_not_the_kind_or_gate(tmp_path: 
     def handler(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, json={
             "model": "jev-1.13.0", "usage": {"input_tokens": 1, "output_tokens": 1},
-            "answers": {"pick": {"type": "choice", "choice": "a", "confidence": 0.9, "probabilities": {"a": 0.9}}},
+            "answers": {"pick": {"type": "choice", "choice": "a", "confidence": 0.9, "probabilities": {"a": 1.0}}},
         })
 
     engine = _engine(handler)
