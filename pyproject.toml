@@ -17,6 +17,9 @@ dependencies = [
 [project.scripts]
 jevdevice-mcp = "jevdevice.mcp_server:main"
 
+[project.optional-dependencies]
+sandbox = ["vercel-sandbox>=0.7"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3,<9",

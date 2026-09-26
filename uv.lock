@@ -638,6 +638,11 @@ dependencies = [
     { name = "uiautomator2" },
 ]
 
+[package.optional-dependencies]
+sandbox = [
+    { name = "vercel-sandbox" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
@@ -655,7 +660,9 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.48" },
     { name = "typesymbolic", extras = ["jev"], git = "https://github.com/Xopher00/typesymbolic?rev=85eed2d" },
     { name = "uiautomator2", specifier = ">=3.7.0" },
+    { name = "vercel-sandbox", marker = "extra == 'sandbox'", specifier = ">=0.7" },
 ]
+provides-extras = ["sandbox"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2108,4 +2115,56 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5d/ad/04bbb797c84fc1f26cb171f7394716f4865ffb8d8c5e1eef42565c2dfa6b/uvicorn-0.53.0.tar.gz", hash = "sha256:a9356f0cb89b3b8621529c5d5eebd69bfe154f4c3f68b4cf2de47e45fa855c2e", size = 110881, upload-time = "2026-09-14T07:44:23.815Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/18/0eea75741ee812e9f598b687619ce2454f6c3a1c5cd21ea990ec6bd26f45/uvicorn-0.53.0-py3-none-any.whl", hash = "sha256:e8dca71ec86dce5f04e333f0d56cdedf942446e6643b9cea1af0d6d3a02cb03e", size = 87081, upload-time = "2026-09-14T07:44:22.179Z" },
+]
+
+[[package]]
+name = "vercel-headers"
+version = "0.7.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/0c/241e47d351413c108f0b411df087feeb15cf32f422000414ce24d3791537/vercel_headers-0.7.2.tar.gz", hash = "sha256:f5255da014032b357a3f18769bd19ff675b0ee3e4fc355c6bbd574dfc674222d", size = 6148, upload-time = "2026-09-08T17:09:14.589Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/64/12d53f70253dfd00f1a394bc930b5d55bad84ac17c9fc77b5ca0525ccd18/vercel_headers-0.7.2-py3-none-any.whl", hash = "sha256:26dcb0016b5c553e638385e532cb8557f071e247b46f2575d5737e48718dc8c6", size = 3922, upload-time = "2026-09-08T17:09:13.585Z" },
+]
+
+[[package]]
+name = "vercel-internal-core"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3e/61/3c15abe726c63ab0a44f75dbe49bd6221b8b17b424c2810b3086b404b6fb/vercel_internal_core-0.2.0.tar.gz", hash = "sha256:84bf3ff08a066682c8f02cadcc93a3e7580c27a06627db9f8e8d640bbe2fb53b", size = 19629, upload-time = "2026-09-15T14:33:29.705Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/90/7e/6cff886cddefc90479c2c73ada0fdcae0e6ba6362af8d2183cb5a1929d7d/vercel_internal_core-0.2.0-py3-none-any.whl", hash = "sha256:63069093f3ecaf09feed51fb602dfb4dc5ed17ac01524965881f46406c0d83f5", size = 23866, upload-time = "2026-09-15T14:33:28.855Z" },
+]
+
+[[package]]
+name = "vercel-oidc"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "vercel-headers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/65/f2/6767fdc4c53311ee6121bf958c1bb2ea00b8e9e19bdc59e1ffe5b4372bf3/vercel_oidc-0.9.0.tar.gz", hash = "sha256:71d59da7b96b53fa0f7255ee7cb39ae739623c497b15f9ec3b354ea7086c1a9d", size = 16119, upload-time = "2026-09-15T14:33:37.43Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/45/9ca537a8a1d2d5bdd60b9f5cab361c819ca9e13cc45248d4a917c3b7f7ef/vercel_oidc-0.9.0-py3-none-any.whl", hash = "sha256:04c99314aeeeb6ec3abaaad1729cbbe4df6dfad051771469585da843e0fbd7ff", size = 16005, upload-time = "2026-09-15T14:33:36.541Z" },
+]
+
+[[package]]
+name = "vercel-sandbox"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "pydantic" },
+    { name = "vercel-internal-core" },
+    { name = "vercel-oidc" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/f7/3427e75b63056f77ed3fd5986818a1b521d86c2c8704d2e929cedcbf70aa/vercel_sandbox-0.7.0.tar.gz", hash = "sha256:07d703790d0141dc75e0962baf35d666a6961bc1de913749137267a2550c81e2", size = 80326, upload-time = "2026-09-23T16:46:22.354Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/6d/372055569df9db7c1f5663bf128b914e70ab96f3b480fd9cf9c1be2c5aff/vercel_sandbox-0.7.0-py3-none-any.whl", hash = "sha256:f7eb897a1a5092fe8c38319ce803033b1a9ced8f414564a43a668432f91ffcd9", size = 91791, upload-time = "2026-09-23T16:46:21.169Z" },
 ]

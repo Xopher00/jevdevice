@@ -4,7 +4,8 @@ device.run). Zero engine edits; the only new question wordings ride the frozen
 v2 artifact (every v1 entry byte-identical), consumed via JEV_QUESTION_SET.
 
 Subcommands (all honor the workspace .env; never auto-approves):
-  run            dev-half goals end-to-end on the CliDevice (per-goal timeout)
+  run            dev-half goals end-to-end on the CliDevice (per-goal timeout);
+                 --sandbox runs them in a Vercel Sandbox microVM instead
   gate-check     live gate-quality table over CLI probe cases (the calibration
                  capture for this family's risk class; n < MIN_LABELS warns)
   journal-report device-column separation across families (zero model calls)
@@ -32,7 +33,7 @@ from splitguard import assert_dev_only, dev_goals
 from jevdevice import question_sets
 from jevdevice.budget import current_profile
 from jevdevice.common import bootstrap
-from jevdevice.device import CliDevice, Device
+from jevdevice.device import CliDevice, Device, open_sandbox_device
 from jevdevice.jev import ask as jev_ask
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import goal_scope
@@ -332,8 +333,16 @@ def make_client_and_device():
     return jev, CliDevice()
 
 
-async def cmd_run(goal_id: str | None, timeout_s: float) -> int:
+async def cmd_run(goal_id: str | None, timeout_s: float, *, sandbox: bool = False, snapshot_id: str | None = None) -> int:
     jev, device = make_client_and_device()
+    if not sandbox:
+        return await _run_goals(jev, device, goal_id, timeout_s)
+    async with open_sandbox_device(snapshot_id=snapshot_id) as sandbox_device:
+        print(f"device: {sandbox_device.name} (network egress denied, destroyed on exit)")
+        return await _run_goals(jev, sandbox_device, goal_id, timeout_s)
+
+
+async def _run_goals(jev, device: Device, goal_id: str | None, timeout_s: float) -> int:
     family = CliTaskFamily()
     tasks = {goal_id: family.get_tasks()[goal_id]} if goal_id else family.get_tasks()
     missing = [gid for gid in tasks if gid not in CANDIDATE_COMMANDS]
@@ -369,6 +378,9 @@ def main() -> int:
     parser.add_argument("--goal", help="run one goal id (default: every dev-half task)")
     parser.add_argument("--timeout", type=float, default=GOAL_TIMEOUT_S,
                         help=f"per-goal wall clock in seconds (default {GOAL_TIMEOUT_S})")
+    parser.add_argument("--sandbox", action="store_true",
+                        help="run commands in a Vercel Sandbox microVM (needs the `sandbox` extra)")
+    parser.add_argument("--snapshot", help="with --sandbox: start from this sandbox snapshot id")
     args = parser.parse_args()
     # The frozen artifact this family's wordings live in -- selected BEFORE any
     # ask, so every question below consumes v2 (whose phone wordings are
@@ -380,7 +392,7 @@ def main() -> int:
     # laya shadow costs ~20 s/ask in the background and answers nothing).
     os.environ.setdefault("JEV_SHADOW", "0")
     if args.command == "run":
-        return asyncio.run(cmd_run(args.goal, args.timeout))
+        return asyncio.run(cmd_run(args.goal, args.timeout, sandbox=args.sandbox, snapshot_id=args.snapshot))
     if args.command == "gate-check":
         return asyncio.run(cmd_gate_check())
     journal_report()
