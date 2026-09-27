@@ -168,9 +168,10 @@ async def test_run_probe_end_to_end_through_the_untouched_engine(
     row = outcome_rows[0]
     assert row["device"].startswith("cli:")
     assert row["kind"] == "cli_probe"
-    assert len(verdict_rows) == 1
-    assert verdict_rows[0]["status"] == "verified"
-    assert verdict_rows[0]["call_id"] == row["call_id"]
+    # one verdict on the pick's call_id, one on the gate's (the gate answer is now a calibration label)
+    assert len(verdict_rows) == 2
+    assert all(v["status"] == "verified" for v in verdict_rows)
+    assert row["call_id"] in {v["call_id"] for v in verdict_rows}
 
 
 async def test_run_probe_never_auto_approves(
@@ -188,4 +189,4 @@ async def test_run_probe_never_auto_approves(
     assert stub.ran == []  # the pending verdict NEVER executes
     rows = list(journal_recorder.replay())
     verdict_rows = [r for r in rows if r["type"] == "verdict"]
-    assert len(verdict_rows) == 1 and verdict_rows[0]["status"] == "escalated"
+    assert verdict_rows and all(v["status"] == "escalated" for v in verdict_rows)

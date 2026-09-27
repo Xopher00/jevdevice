@@ -80,7 +80,8 @@ def verdict_from_response(response: dict, *, key: str | None = None) -> Verdict:
         result = "verified"
     elif status == "escalated":
         result = "escalated"
-    elif response.get("exit_code") not in (None, 0):
+    # An explicit "failed" comes only from flows with an external oracle, never the judge's own verify.
+    elif status == "failed" or response.get("exit_code") not in (None, 0):
         result = "failed"
     else:
         result = "unconfirmed"

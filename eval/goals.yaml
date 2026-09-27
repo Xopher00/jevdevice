@@ -54,3 +54,26 @@ phone_actions:
   - {id: pa08, split: dev,     goal: "Open the Camera app."}
   - {id: pa09, split: heldout, goal: "Turn on Do Not Disturb."}
   - {id: pa10, split: heldout, goal: "Take a screenshot."}
+
+# Seeded inside a Vercel Sandbox microVM under /tmp/vmfix (see eval/phases/vm_family.py).
+vm_questions:
+  - {id: vm01, split: dev,     goal: "How many lines are in the notes file at /tmp/vmfix/notes.txt?"}
+  - {id: vm02, split: heldout, goal: "What user am I running as?"}
+  - {id: vm03, split: dev,     goal: "Which git branch is checked out in /tmp/vmfix/app?"}
+  - {id: vm04, split: heldout, goal: "How much free memory is there on this machine?"}
+  - {id: vm05, split: dev,     goal: "What is the latest commit message in the repo at /tmp/vmfix/app?"}
+  - {id: vm06, split: heldout, goal: "Which is the largest file in /tmp/vmfix/data?"}
+  - {id: vm07, split: dev,     goal: "Is /tmp/vmfix/app/run.sh executable?"}
+  - {id: vm08, split: heldout, goal: "What does the TODO file in /tmp/vmfix say is next?"}
+  - {id: vm09, split: dev,     goal: "Which python3 version is installed?"}
+  - {id: vm10, split: heldout, goal: "What is the first line of the notes file at /tmp/vmfix/notes.txt?"}
+  - {id: vm11, split: dev,     goal: "How many CPU cores does this machine have?"}
+  - {id: vm12, split: heldout, goal: "How many files are in /tmp/vmfix/data?"}
+  - {id: vm13, split: dev,     goal: "What is the value of mode in /tmp/vmfix/app/config.ini?"}
+  - {id: vm14, split: heldout, goal: "What is the git user name configured for the repo at /tmp/vmfix/app?"}
+  - {id: vm15, split: dev,     goal: "How many .log files are in /tmp/vmfix/logs?"}
+  - {id: vm16, split: heldout, goal: "How many commits are in the git log at /tmp/vmfix/app?"}
+  - {id: vm17, split: dev,     goal: "How many lines does the script /tmp/vmfix/app/run.sh have?"}
+  - {id: vm18, split: heldout, goal: "Is a process named vmfix-worker running?"}
+  - {id: vm19, split: dev,     goal: "What kernel version is running?"}
+  - {id: vm20, split: heldout, goal: "What is the hostname of this machine?"}

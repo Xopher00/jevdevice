@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 
 PHASES = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +35,7 @@ from jevdevice import question_sets
 from jevdevice.budget import current_profile
 from jevdevice.common import bootstrap
 from jevdevice.device import CliDevice, Device, open_sandbox_device
+from jevdevice.execution.dispatch import label_target
 from jevdevice.jev import ask as jev_ask
 from jevdevice.journal import outcomes
 from jevdevice.journal.decision_log import goal_scope
@@ -113,9 +115,13 @@ def dev_pc_goals() -> list[dict]:
     return goals
 
 
-async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, verbose: bool = True) -> dict:
+async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, verbose: bool = True,
+                    expect: str | None = None) -> dict:
     """One goal -> one gated probe command through the untouched engine spine.
-    A needs_approval verdict NEVER executes here (fail-closed escalation)."""
+    A needs_approval verdict NEVER executes here (fail-closed escalation).
+    `expect`, given, makes this an oracle probe: "ok" needs exit 0 AND a stdout
+    regex match, anything else is "failed"; without it, "ok" needs `satisfied`
+    over the floor. `satisfied` is asked and recorded either way."""
     profile = current_profile(jev.name)
     with goal_scope(goal):
         proposal = await propose_from_closed_set(
@@ -127,16 +133,18 @@ async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, ve
             command_for=lambda c: CommandVariant(command=c, rationale="listed candidate for this goal"),
             label_for=lambda c: c,
             gate_instructions=question_sets.text("cli.safe"),
+            gate_qid="cli.safe",  # tags the ask so it joins the shared ("gate","noul_p") unit
             verbose=verbose,
         )
-        call_id = proposal.pick_call_id or (proposal.gate_result.call_id if proposal.gate_result else None)
+        # `label` (not a bare call_id/key) so a device-verified outcome also
+        # tests the gate's own "safe" key on the gate's call_id, not just "pick".
         if proposal.pending is not None:  # the human decides; unattended runs count this as a failure
-            outcomes.record_action(device=device, call_id=call_id, key="pick", kind=KIND_CLI_PROBE,
-                                   response={"status": "escalated"}, reasons=proposal.reasons)
+            outcomes.record_action(device=device, kind=KIND_CLI_PROBE, response={"status": "escalated"},
+                                   reasons=proposal.reasons, label=label_target(proposal, KIND_CLI_PROBE))
             return {"status": "escalated", "reasons": ("needs_approval",), "command": None}
         if proposal.ready is None:
-            outcomes.record_action(device=device, call_id=call_id, key="pick", kind=KIND_CLI_PROBE,
-                                   response={"status": "escalated"}, reasons=proposal.reasons)
+            outcomes.record_action(device=device, kind=KIND_CLI_PROBE, response={"status": "escalated"},
+                                   reasons=proposal.reasons, label=label_target(proposal, KIND_CLI_PROBE))
             return {"status": "escalated", "reasons": proposal.reasons, "command": None}
 
         command = proposal.ready
@@ -149,14 +157,22 @@ async def run_probe(jev, device: Device, goal: str, candidates: list[str], *, ve
             phase="verify",
         )
         satisfied = verify_answer["satisfied"].noul
+        if expect is not None:
+            oracle = result.exit_code == 0 and re.search(expect, result.stdout) is not None
+            # A seeded-state oracle contradicting the output is a real failure, unlike a low self-graded `satisfied`.
+            status = "ok" if oracle else "failed"
+        else:
+            oracle = None
+            status = "ok" if result.exit_code == 0 and satisfied >= profile.noul_floor else "unverified"
         response = {
-            "status": "ok" if result.exit_code == 0 and satisfied >= profile.noul_floor else "unverified",
+            "status": status,
             "exit_code": result.exit_code,
             "satisfied": satisfied,
+            "oracle": oracle,
             "reasons": [] if result.exit_code == 0 else [f"exit {result.exit_code}"],
         }
-        outcomes.record_action(device=device, call_id=call_id, key="pick", kind=KIND_CLI_PROBE,
-                               executed_command=command.command, response=response)
+        outcomes.record_action(device=device, kind=KIND_CLI_PROBE, executed_command=command.command,
+                               response=response, label=label_target(proposal, KIND_CLI_PROBE))
         return {**response, "command": command.command}
 
 
@@ -193,17 +209,50 @@ GATE_CASES = [
 
 
 async def gate_check(jev) -> list[dict]:
+    from typesymbolic.domain import Verdict
+
+    from jevdevice.journal.decision_log import get_journal
+
+    journal = get_journal()
+    engine_name = jev.name
+    qset = question_set_version()
+    # Same (command, action, engine, question-set) is never re-labeled.
+    already_labeled = {
+        (row.get("command"), row.get("action"), row.get("engine"), row.get("question_set"))
+        for row in journal.replay()
+        if row.get("type") == "outcome" and row.get("source") == "gate-check"
+    }
+    added = skipped = 0
     rows = []
     for category, action, command, rationale in GATE_CASES:
         result = await gate_command(
             jev, CommandVariant(command=command, rationale=rationale), chosen_label=action,
-            instructions=question_sets.text("cli.safe"),
+            qid="cli.safe",  # tags the ask so it joins the shared ("gate","noul_p") unit
         )
-        noul = result.noul_confidence
+        noul = result.confidence
         rows.append({"category": category, "action": action, "command": command,
                      "verdict": result.verdict, "reason": result.reason, "noul": noul})
         noul_s = f"{noul:.2f}" if noul is not None else "n/a"
         print(f"{category:<14} {action:<24} {command:<32} {result.verdict:<15} {result.reason:<14} noul={noul_s}")
+        if noul is not None and result.call_id:
+            dedupe_key = (command, action, engine_name, qset)
+            if dedupe_key in already_labeled:
+                skipped += 1
+            else:
+                verified = category == "safe answer"
+                # No generic extra passthrough on record_action; write via the journal directly.
+                journal.record_outcome(
+                    call_id=result.call_id, gate=result, outcome=None,
+                    extra={"device": "cli:gate-check", "source": "gate-check", "category": category,
+                           "command": command, "action": action, "engine": engine_name, "question_set": qset},
+                )
+                journal.record_verdict(
+                    call_id=result.call_id,
+                    verdict=Verdict(status="verified" if verified else "failed", tests=("safe",)),
+                )
+                already_labeled.add(dedupe_key)
+                added += 1
+    print(f"gate-check labels: {added} added, {skipped} skipped")
     asked = [r["noul"] for r in rows if r["noul"] is not None]
     fast_path = [r for r in rows if r["noul"] is None]
     if fast_path:
